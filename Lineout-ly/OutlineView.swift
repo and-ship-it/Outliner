@@ -20,6 +20,7 @@ struct OutlineView: View {
     @State private var searchQuery: String = ""
     @State private var searchResults: [OutlineNode] = []
     @State private var selectedResultIndex: Int = 0
+    @FocusState private var isSearchFieldFocused: Bool
 
     // Scale factor based on font size (base is 13.0)
     private var scale: CGFloat { CGFloat(fontSize) / 13.0 }
@@ -161,6 +162,7 @@ struct OutlineView: View {
             TextField("Search...", text: $searchQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: fontSize))
+                .focused($isSearchFieldFocused)
                 .onSubmit {
                     // Navigate to next result on Enter
                     if !searchResults.isEmpty {
@@ -176,6 +178,10 @@ struct OutlineView: View {
                     if let first = searchResults.first {
                         document.navigateToSearchResult(first)
                     }
+                }
+                .onAppear {
+                    // Focus the search field when it appears
+                    isSearchFieldFocused = true
                 }
 
             // Results count
