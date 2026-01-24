@@ -10,6 +10,16 @@ import SwiftUI
 import AppKit
 #endif
 
+#if os(macOS)
+/// Open a new window
+private func openNewWindow() {
+    // Clear pending zoom so new window starts at root
+    WindowManager.shared.pendingZoom = nil
+    // Trigger new window - this works with WindowGroup
+    NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+}
+#endif
+
 @main
 struct Lineout_lyApp: App {
     #if os(macOS)
@@ -22,9 +32,12 @@ struct Lineout_lyApp: App {
             ContentView()
         }
         .commands {
-            // Remove New Document command
+            // Replace New Document with New Window
             CommandGroup(replacing: .newItem) {
-                // Empty - no new document creation
+                Button("New Window") {
+                    openNewWindow()
+                }
+                .keyboardShortcut("n", modifiers: .command)
             }
 
             OutlineCommands()
