@@ -17,6 +17,9 @@ struct OutlineView: View {
 
     @State private var hasSetInitialFocus = false
 
+    // Scale factor based on font size (base is 13.0)
+    private var scale: CGFloat { CGFloat(fontSize) / 13.0 }
+
     /// The zoomed node based on zoomedNodeId
     private var zoomedNode: OutlineNode? {
         guard let id = zoomedNodeId else { return nil }
@@ -59,7 +62,7 @@ struct OutlineView: View {
                             .id(item.node.id)
                         }
                     }
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 8 * scale)
                 }
                 .onChange(of: document.focusedNodeId) { _, newId in
                     if let id = newId {
@@ -138,7 +141,7 @@ struct OutlineView: View {
 
     /// Breadcrumbs shown at the bottom when zoomed
     private var bottomBreadcrumbs: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 4 * scale) {
             // Home button
             Button(action: {
                 withAnimation(.easeOut(duration: 0.2)) {
@@ -146,14 +149,14 @@ struct OutlineView: View {
                 }
             }) {
                 Image(systemName: "house")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11 * scale))
             }
             .buttonStyle(.plain)
 
             // Breadcrumb path
             ForEach(breadcrumbs) { node in
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9))
+                    .font(.system(size: 9 * scale))
 
                 Button(action: {
                     withAnimation(.easeOut(duration: 0.2)) {
@@ -161,7 +164,7 @@ struct OutlineView: View {
                     }
                 }) {
                     Text(node.title.isEmpty ? "Untitled" : String(node.title.prefix(15)))
-                        .font(.system(size: 11))
+                        .font(.system(size: 11 * scale))
                         .lineLimit(1)
                 }
                 .buttonStyle(.plain)
@@ -170,17 +173,17 @@ struct OutlineView: View {
             // Current zoomed node
             if let zoomed = zoomedNode {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 9))
+                    .font(.system(size: 9 * scale))
                 Text(zoomed.title.isEmpty ? "Untitled" : String(zoomed.title.prefix(15)))
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11 * scale, weight: .medium))
                     .lineLimit(1)
             }
 
             Spacer()
         }
         .foregroundStyle(.secondary.opacity(0.7))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16 * scale)
+        .padding(.vertical, 8 * scale)
         .background(Color.textBackgroundColor)
     }
 

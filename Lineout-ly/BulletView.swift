@@ -11,10 +11,18 @@ import SwiftUI
 struct BulletView: View {
     let node: OutlineNode
     let isFocused: Bool
+    var scale: CGFloat = 1.0  // Scale factor for sizing
     var onTap: () -> Void = {}
 
-    private let size: CGFloat = 22
-    private let bulletSize: CGFloat = 6
+    // Base sizes (at scale 1.0)
+    private let baseSize: CGFloat = 22
+    private let baseBulletSize: CGFloat = 6
+    private let baseChevronSize: CGFloat = 10
+
+    // Scaled sizes
+    private var size: CGFloat { baseSize * scale }
+    private var bulletSize: CGFloat { baseBulletSize * scale }
+    private var chevronSize: CGFloat { baseChevronSize * scale }
 
     var body: some View {
         Button(action: onTap) {
@@ -30,7 +38,7 @@ struct BulletView: View {
                 if node.hasChildren {
                     // Disclosure triangle
                     Image(systemName: node.isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: chevronSize, weight: .semibold))
                         .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
                 } else {
                     // Simple bullet

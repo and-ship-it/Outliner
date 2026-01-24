@@ -119,17 +119,17 @@ struct OutlineCommands: Commands {
 
             Divider()
 
-            Button("Increase Font Size") {
+            Button("Make Larger") {
                 increaseFontSize()
             }
             .keyboardShortcut("+", modifiers: .command)
 
-            Button("Decrease Font Size") {
+            Button("Make Smaller") {
                 decreaseFontSize()
             }
             .keyboardShortcut("-", modifiers: .command)
 
-            Button("Reset Font Size") {
+            Button("Actual Size") {
                 resetFontSize()
             }
             .keyboardShortcut("0", modifiers: .command)

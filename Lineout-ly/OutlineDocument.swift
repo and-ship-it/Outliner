@@ -30,7 +30,7 @@ final class OutlineDocument {
 
     // MARK: - Initialization
 
-    init(root: OutlineNode = OutlineNode(title: "__root__")) {
+    init(root: OutlineNode) {
         self.root = root
         // Ensure there's always at least one node
         if root.children.isEmpty {
@@ -38,6 +38,11 @@ final class OutlineDocument {
             root.addChild(emptyNode)
             self.focusedNodeId = emptyNode.id
         }
+    }
+
+    /// Convenience initializer that creates a default root node
+    convenience init() {
+        self.init(root: OutlineNode(title: "__root__"))
     }
 
     /// Call this after any structural change (collapse, expand, move, add, delete)

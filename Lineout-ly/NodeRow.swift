@@ -20,7 +20,28 @@ struct NodeRow: View {
     @Binding var fontSize: Double
     @Binding var isFocusMode: Bool  // Whether focus mode is enabled
 
-    private let indentWidth: CGFloat = 20
+    // Base sizes (at default font size 13.0)
+    private let baseFontSize: CGFloat = 13.0
+    private let baseIndentWidth: CGFloat = 20
+    private let baseLeftPadding: CGFloat = 16
+    private let baseTreeLineLeading: CGFloat = 30  // indentWidth + 10
+    private let baseLockIconSize: CGFloat = 8
+    private let baseCheckboxSize: CGFloat = 14
+    private let baseContentLeading: CGFloat = 6
+    private let baseMinTrailing: CGFloat = 12
+
+    // Scale factor based on font size
+    private var scale: CGFloat { CGFloat(fontSize) / baseFontSize }
+
+    // Scaled sizes
+    private var indentWidth: CGFloat { baseIndentWidth * scale }
+    private var leftPadding: CGFloat { baseLeftPadding * scale }
+    private var treeLineLeading: CGFloat { baseTreeLineLeading * scale }
+    private var lockIconSize: CGFloat { baseLockIconSize * scale }
+    private var checkboxSize: CGFloat { baseCheckboxSize * scale }
+    private var contentLeading: CGFloat { baseContentLeading * scale }
+    private var minTrailing: CGFloat { baseMinTrailing * scale }
+
     private let lineColor = Color.gray.opacity(0.3)
 
     private let placeholderText = "Tell me, what is it you plan to do with your one wild and precious life?"
@@ -38,7 +59,7 @@ struct NodeRow: View {
         HStack(alignment: .top, spacing: 0) {
             // Left padding
             Spacer()
-                .frame(width: 16)
+                .frame(width: leftPadding)
 
             // Indentation with tree lines
             if effectiveDepth > 0 {
@@ -49,10 +70,10 @@ struct NodeRow: View {
                             if level < treeLines.count && treeLines[level] {
                                 Rectangle()
                                     .fill(Color.gray.opacity(0.25))
-                                    .frame(width: 1)
-                                    .padding(.leading, indentWidth + 10)
-                                    .padding(.top, -6)
-                                    .padding(.bottom, -4)
+                                    .frame(width: max(1, scale))
+                                    .padding(.leading, treeLineLeading)
+                                    .padding(.top, -6 * scale)
+                                    .padding(.bottom, -4 * scale)
                             }
                         }
                         .frame(width: indentWidth)
@@ -62,7 +83,7 @@ struct NodeRow: View {
 
             // Bullet with lock indicator
             ZStack(alignment: .topTrailing) {
-                BulletView(node: node, isFocused: isNodeFocused) {
+                BulletView(node: node, isFocused: isNodeFocused, scale: scale) {
                     withAnimation(.easeOut(duration: 0.15)) {
                         document.toggleNode(node)
                     }
@@ -71,12 +92,12 @@ struct NodeRow: View {
                 // Lock indicator when locked by another window
                 if isLockedByOtherWindow {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 8))
+                        .font(.system(size: lockIconSize))
                         .foregroundStyle(.gray)
-                        .offset(x: 4, y: -2)
+                        .offset(x: 4 * scale, y: -2 * scale)
                 }
             }
-            .padding(.top, 2)
+            .padding(.top, 2 * scale)
 
             // Task checkbox (shown when node is a task)
             if node.isTask {
@@ -84,16 +105,16 @@ struct NodeRow: View {
                     node.toggleTaskCompleted()
                 }) {
                     Image(systemName: node.isTaskCompleted ? "checkmark.square.fill" : "square")
-                        .font(.system(size: 14))
+                        .font(.system(size: checkboxSize))
                         .foregroundStyle(node.isTaskCompleted ? .secondary : .primary)
                 }
                 .buttonStyle(.plain)
-                .padding(.leading, 4)
-                .padding(.top, 2)
+                .padding(.leading, 4 * scale)
+                .padding(.top, 2 * scale)
             }
 
             // Content
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 2 * scale) {
                 titleView
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -101,12 +122,12 @@ struct NodeRow: View {
                     bodyView
                 }
             }
-            .padding(.leading, 6)
+            .padding(.leading, contentLeading)
             .opacity(isLockedByOtherWindow ? 0.5 : 1.0) // Dim locked nodes
 
-            Spacer(minLength: 12)
+            Spacer(minLength: minTrailing)
         }
-        .padding(.vertical, 1)
+        .padding(.vertical, 1 * scale)
         .contentShape(Rectangle())
         .onTapGesture {
             tryFocusNode()
@@ -269,11 +290,11 @@ struct NodeRow: View {
     @ViewBuilder
     private var bodyView: some View {
         Text(node.body)
-            .font(.callout)
+            .font(.system(size: CGFloat(fontSize) * 0.85))  // Body text slightly smaller
             .foregroundStyle(.secondary)
             .lineLimit(nil)
-            .padding(.leading, 4)
-            .padding(.top, 1)
+            .padding(.leading, 4 * scale)
+            .padding(.top, 1 * scale)
     }
 }
 
