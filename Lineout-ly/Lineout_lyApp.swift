@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 struct Lineout_lyApp: App {
     var body: some Scene {
         // Document-based app for .md files
-        DocumentGroup(newDocument: OutlineDocument.createSample) { configuration in
+        DocumentGroup(newDocument: OutlineDocument.createEmpty) { configuration in
             OutlineView(document: configuration.document)
         }
         .commands {

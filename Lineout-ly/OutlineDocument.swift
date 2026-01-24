@@ -434,9 +434,20 @@ extension OutlineDocument: ReferenceFileDocument {
     }
 }
 
-// MARK: - Sample Document
+// MARK: - Document Creation
 
 extension OutlineDocument {
+    /// Creates an empty document with one blank bullet (for new documents)
+    nonisolated static func createEmpty() -> OutlineDocument {
+        let root = OutlineNode(title: "__root__")
+        // Start with one empty bullet - init will handle this, but be explicit
+        let emptyNode = OutlineNode(title: "")
+        root.addChild(emptyNode)
+        let doc = OutlineDocument(root: root)
+        doc.focusedNodeId = emptyNode.id
+        return doc
+    }
+
     @MainActor
     static func sample() -> OutlineDocument {
         OutlineDocument(root: MarkdownCodec.sampleOutline())
