@@ -203,6 +203,12 @@ struct OutlineTextField: NSViewRepresentable {
             outlineTextField.actionHandler = { action in
                 currentOnAction?(action)
             }
+
+            // Handle mouse click focus - ensure document.focusedNodeId is updated
+            let currentOnFocusChange = self.onFocusChange
+            outlineTextField.onMouseDownFocus = {
+                currentOnFocusChange(true)
+            }
         }
 
         // Update editable state based on lock
@@ -540,6 +546,7 @@ struct OutlineTextField: NSViewRepresentable {
 /// NSTextField subclass that handles outline keyboard shortcuts
 class OutlineNSTextField: NSTextField {
     var actionHandler: ((OutlineAction) -> Void)?
+    var onMouseDownFocus: (() -> Void)?  // Called when text field gains focus via mouse click
 
     // Progressive selection state
     private enum SelectionLevel {
@@ -558,6 +565,9 @@ class OutlineNSTextField: NSTextField {
 
     // Custom field editor for thick cursor
     private var thickCursorEditor: ThickCursorTextView?
+
+    // Track if we're becoming first responder via mouse
+    private var isBecomingFirstResponderViaClick = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -614,9 +624,21 @@ class OutlineNSTextField: NSTextField {
         }
     }
 
+    override func mouseDown(with event: NSEvent) {
+        // Track that we're focusing via mouse click
+        isBecomingFirstResponderViaClick = true
+        super.mouseDown(with: event)
+        isBecomingFirstResponderViaClick = false
+    }
+
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result {
+            // Notify about focus change if this came from a mouse click
+            if isBecomingFirstResponderViaClick {
+                onMouseDownFocus?()
+            }
+
             // Position cursor at start after becoming first responder
             DispatchQueue.main.async { [weak self] in
                 if let editor = self?.currentEditor() {
