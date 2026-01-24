@@ -25,7 +25,7 @@ struct NodeRow: View {
     // Base sizes (at default font size 13.0)
     private let baseFontSize: CGFloat = 13.0
     private let baseIndentWidth: CGFloat = 20
-    private let baseTreeLineLeading: CGFloat = 30  // indentWidth + 10
+    private let baseBulletViewSize: CGFloat = 22  // BulletView width/height
     private let baseLockIconSize: CGFloat = 8
     private let baseCheckboxSize: CGFloat = 14
     private let baseContentLeading: CGFloat = 6
@@ -55,7 +55,8 @@ struct NodeRow: View {
 
     // Scaled sizes (content-level spacing)
     private var indentWidth: CGFloat { baseIndentWidth * scale }
-    private var treeLineLeading: CGFloat { baseTreeLineLeading * scale }
+    private var bulletViewSize: CGFloat { baseBulletViewSize * scale }
+    private var treeLineLeading: CGFloat { (baseBulletViewSize / 2) * scale }  // Center of bullet = 11 * scale
     private var lockIconSize: CGFloat { baseLockIconSize * scale }
     private var checkboxSize: CGFloat { baseCheckboxSize * scale }
     private var contentLeading: CGFloat { baseContentLeading * scale }
