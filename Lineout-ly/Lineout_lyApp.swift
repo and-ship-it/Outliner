@@ -57,6 +57,8 @@ struct OutlineCommands: Commands {
     @FocusedValue(\.isFocusMode) var focusModeBinding
     @FocusedValue(\.isSearching) var searchingBinding
     @FocusedValue(\.isAlwaysOnTop) var alwaysOnTopBinding
+    @FocusedValue(\.undoManager) var undoManager
+    @FocusedValue(\.collapsedNodeIds) var collapsedNodeIdsBinding
     @AppStorage("autocompleteEnabled") var autocompleteEnabled: Bool = true
     @AppStorage("restorePreviousSession") var restorePreviousSession: Bool = true
 
@@ -89,6 +91,21 @@ struct OutlineCommands: Commands {
             }
 
             Divider()
+        }
+
+        // Edit menu - Undo/Redo
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") {
+                undoManager?.undo()
+            }
+            .keyboardShortcut("z", modifiers: .command)
+            .disabled(undoManager?.canUndo != true)
+
+            Button("Redo") {
+                undoManager?.redo()
+            }
+            .keyboardShortcut("z", modifiers: [.command, .shift])
+            .disabled(undoManager?.canRedo != true)
         }
 
         // Edit menu additions
@@ -203,7 +220,7 @@ struct OutlineCommands: Commands {
                     document?.moveUp()
                 }
             }
-            .keyboardShortcut(.upArrow, modifiers: .option)
+            .keyboardShortcut(.upArrow, modifiers: [.shift, .option])
             .disabled(document == nil)
 
             Button("Move Down") {
@@ -211,41 +228,52 @@ struct OutlineCommands: Commands {
                     document?.moveDown()
                 }
             }
-            .keyboardShortcut(.downArrow, modifiers: .option)
+            .keyboardShortcut(.downArrow, modifiers: [.shift, .option])
             .disabled(document == nil)
 
             Divider()
 
             Button("Collapse") {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    document?.collapseFocused()
+                // Collapse uses per-tab state via collapsedNodeIdsBinding
+                if let focused = document?.focusedNode, focused.hasChildren {
+                    collapsedNodeIdsBinding?.wrappedValue.insert(focused.id)
                 }
             }
-            .keyboardShortcut(.upArrow, modifiers: .command)
+            .keyboardShortcut(.upArrow, modifiers: [.command, .shift])
             .disabled(document == nil)
 
             Button("Expand") {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    document?.expandFocused()
+                // Expand uses per-tab state via collapsedNodeIdsBinding
+                if let focused = document?.focusedNode {
+                    collapsedNodeIdsBinding?.wrappedValue.remove(focused.id)
                 }
             }
-            .keyboardShortcut(.downArrow, modifiers: .command)
+            .keyboardShortcut(.downArrow, modifiers: [.command, .shift])
             .disabled(document == nil)
 
             Button("Collapse All Children") {
-                if let node = document?.focusedNode {
-                    document?.collapseAllChildren(of: node)
+                if let focused = document?.focusedNode {
+                    // Collapse all descendants that have children
+                    for descendant in focused.flattened() {
+                        if descendant.hasChildren {
+                            collapsedNodeIdsBinding?.wrappedValue.insert(descendant.id)
+                        }
+                    }
                 }
             }
-            .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+            .keyboardShortcut(.upArrow, modifiers: [.command, .shift, .option])
             .disabled(document == nil)
 
             Button("Expand All Children") {
-                if let node = document?.focusedNode {
-                    document?.expandAllChildren(of: node)
+                if let focused = document?.focusedNode {
+                    // Expand the focused node and all descendants
+                    collapsedNodeIdsBinding?.wrappedValue.remove(focused.id)
+                    for descendant in focused.flattened() {
+                        collapsedNodeIdsBinding?.wrappedValue.remove(descendant.id)
+                    }
                 }
             }
-            .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+            .keyboardShortcut(.downArrow, modifiers: [.command, .shift, .option])
             .disabled(document == nil)
         }
     }
@@ -306,7 +334,16 @@ struct OutlineCommands: Commands {
     private func goHomeAndCollapseAll() {
         withAnimation(.easeOut(duration: 0.2)) {
             zoomedNodeIdBinding?.wrappedValue = nil
-            document?.collapseAll()
+            // Collapse all nodes with children in per-tab state
+            if let doc = document {
+                var collapsed = Set<UUID>()
+                for node in doc.root.flattened() {
+                    if node.hasChildren {
+                        collapsed.insert(node.id)
+                    }
+                }
+                collapsedNodeIdsBinding?.wrappedValue = collapsed
+            }
         }
     }
 
@@ -405,6 +442,32 @@ extension FocusedValues {
     var isAlwaysOnTop: Binding<Bool>? {
         get { self[FocusedAlwaysOnTopKey.self] }
         set { self[FocusedAlwaysOnTopKey.self] = newValue }
+    }
+}
+
+// MARK: - Focused Value for Undo Manager
+
+struct FocusedUndoManagerKey: FocusedValueKey {
+    typealias Value = UndoManager
+}
+
+extension FocusedValues {
+    var undoManager: UndoManager? {
+        get { self[FocusedUndoManagerKey.self] }
+        set { self[FocusedUndoManagerKey.self] = newValue }
+    }
+}
+
+// MARK: - Focused Value for Collapsed Node IDs (per-tab)
+
+struct FocusedCollapsedNodeIdsKey: FocusedValueKey {
+    typealias Value = Binding<Set<UUID>>
+}
+
+extension FocusedValues {
+    var collapsedNodeIds: Binding<Set<UUID>>? {
+        get { self[FocusedCollapsedNodeIdsKey.self] }
+        set { self[FocusedCollapsedNodeIdsKey.self] = newValue }
     }
 }
 

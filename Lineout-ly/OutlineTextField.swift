@@ -30,6 +30,7 @@ enum OutlineAction {
     case progressiveSelectAll  // Cmd+A progressive selection
     case clearSelection        // Escape to clear selection
     case deleteWithChildren
+    case deleteSelected        // Delete all selected nodes (Cmd+Shift+Backspace with selection)
     case toggleTask
     case toggleFocusMode
     case goHomeAndCollapseAll
@@ -90,6 +91,7 @@ struct OutlineTextField: NSViewRepresentable {
     var hasNextNode: Bool = true  // Whether there's a next node to navigate to
     var placeholder: String? = nil  // Placeholder text shown when empty
     var searchQuery: String = ""  // Current search query for highlighting matches
+    var hasSelection: Bool = false  // Whether there's a multi-node selection active
     var onFocusChange: (Bool) -> Void
     var onAction: ((OutlineAction) -> Void)?
     var onSplitLine: ((String) -> Void)?  // Called when splitting line, passes text after cursor
@@ -179,6 +181,9 @@ struct OutlineTextField: NSViewRepresentable {
 
             // Update locked state
             outlineTextField.isNodeLocked = self.isLocked
+
+            // Update multi-selection state
+            outlineTextField.hasMultiSelection = self.hasSelection
 
             // Handle mouse click focus - ensure document.focusedNodeId is updated
             // But don't allow focus on locked nodes
@@ -530,6 +535,7 @@ class OutlineNSTextField: NSTextField {
     var actionHandler: ((OutlineAction) -> Void)?
     var onMouseDownFocus: (() -> Void)?  // Called when text field gains focus via mouse click
     var isNodeLocked: Bool = false  // Whether this node is locked by another tab
+    var hasMultiSelection: Bool = false  // Whether there's a multi-node selection active
 
     // Progressive selection state (Shift+Down)
     private enum SelectionLevel {
@@ -746,37 +752,72 @@ class OutlineNSTextField: NSTextField {
         let hasOption = flags.contains(.option)
         let hasShift = flags.contains(.shift)
 
+        // Clear multi-selection on any key press except:
+        // - Cmd+Shift+Backspace (which deletes selected)
+        // - Escape (which handles clearing itself)
+        // - Cmd+A (which handles selection itself)
+        if hasMultiSelection {
+            let isCmdShiftBackspace = event.keyCode == 51 && hasCommand && hasShift
+            let isEscape = event.keyCode == 53
+            let isCmdA = event.keyCode == 0 && hasCommand && !hasShift && !hasOption
+
+            if !isCmdShiftBackspace && !isEscape && !isCmdA {
+                cmdASelectionLevel = 0
+                actionHandler?(.clearSelection)
+            }
+        }
+
         // Handle key equivalents (keys with modifiers)
         switch event.keyCode {
         case 126: // Up arrow
-            if hasCommand && hasOption {
+            if hasCommand && hasShift && hasOption {
+                // Cmd+Shift+Option+Up: collapse all children
                 actionHandler?(.collapseAll)
                 return true
-            } else if hasCommand {
+            } else if hasCommand && hasShift {
+                // Cmd+Shift+Up: collapse
                 actionHandler?(.collapse)
                 return true
-            } else if hasOption {
+            } else if hasShift && hasOption {
+                // Shift+Option+Up: move bullet up
                 actionHandler?(.moveUp)
                 return true
             }
+            // Plain Cmd+Up: let system handle (move to start of text/document)
 
         case 125: // Down arrow
-            if hasCommand && hasOption {
+            if hasCommand && hasShift && hasOption {
+                // Cmd+Shift+Option+Down: expand all children
                 actionHandler?(.expandAll)
                 return true
-            } else if hasCommand {
+            } else if hasCommand && hasShift {
+                // Cmd+Shift+Down: expand
                 actionHandler?(.expand)
                 return true
-            } else if hasOption {
+            } else if hasShift && hasOption {
+                // Shift+Option+Down: move bullet down
                 actionHandler?(.moveDown)
                 return true
-            } else if hasShift {
+            } else if hasShift && !hasCommand && !hasOption {
                 // Shift+Down: progressive selection
                 handleProgressiveSelectDown()
                 return true
             }
+            // Plain Cmd+Down: let system handle (move to end of text/document)
+
+        case 123: // Left arrow
+            if hasShift && hasOption && !hasCommand {
+                // Shift+Option+Left: outdent bullet
+                actionHandler?(.outdent)
+                return true
+            }
 
         case 124: // Right arrow
+            if hasShift && hasOption && !hasCommand {
+                // Shift+Option+Right: indent bullet
+                actionHandler?(.indent)
+                return true
+            }
             // Accept suggestion when at end of text and no modifiers
             if !hasCommand && !hasOption && !hasShift {
                 if isShowingSuggestion {
@@ -837,8 +878,13 @@ class OutlineNSTextField: NSTextField {
 
         case 51: // Delete/Backspace
             if hasCommand && hasShift {
-                // Cmd+Shift+Delete: delete bullet and all children
-                actionHandler?(.deleteWithChildren)
+                // Cmd+Shift+Delete: delete selected nodes if there's a selection,
+                // otherwise delete focused bullet and all children
+                if hasMultiSelection {
+                    actionHandler?(.deleteSelected)
+                } else {
+                    actionHandler?(.deleteWithChildren)
+                }
                 return true
             }
 
@@ -916,6 +962,18 @@ class OutlineNSTextField: NSTextField {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Clear multi-selection on any regular key press (typing)
+        if hasMultiSelection {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let hasCommand = flags.contains(.command)
+
+            // Only clear if it's a regular typing key (no command modifier)
+            if !hasCommand {
+                cmdASelectionLevel = 0
+                actionHandler?(.clearSelection)
+            }
+        }
+
         // Handle plain arrow keys on empty text fields
         // (doCommandBy may not be called for empty fields)
         if stringValue.isEmpty {

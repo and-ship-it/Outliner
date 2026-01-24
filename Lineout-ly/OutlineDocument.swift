@@ -31,6 +31,9 @@ final class OutlineDocument {
     /// Whether auto-save is enabled (set to false during loading)
     var autoSaveEnabled: Bool = true
 
+    /// Undo manager for tracking changes
+    let undoManager = UndoManager()
+
     // MARK: - Initialization
 
     init(root: OutlineNode) {
@@ -339,10 +342,19 @@ final class OutlineDocument {
 
     @discardableResult
     func createSiblingBelow(withTitle title: String = "") -> OutlineNode? {
+        let previousFocusId = focusedNodeId
+
         guard let focused = focusedNode, let _ = focused.parent else {
             // Create at root level
             let newNode = OutlineNode(title: title)
             root.addChild(newNode)
+
+            // Register undo
+            undoManager.registerUndo(withTarget: self) { doc in
+                doc.deleteNodeForUndo(newNode.id, restoreFocusTo: previousFocusId)
+            }
+            undoManager.setActionName("New Bullet")
+
             structureDidChange()
 
             // Defer focus to next run loop to allow SwiftUI to create the view
@@ -355,6 +367,13 @@ final class OutlineDocument {
 
         let newNode = OutlineNode(title: title)
         focused.insertSiblingBelow(newNode)
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.deleteNodeForUndo(newNode.id, restoreFocusTo: previousFocusId)
+        }
+        undoManager.setActionName("New Bullet")
+
         structureDidChange()
 
         // Defer focus to next run loop to allow SwiftUI to create the view
@@ -367,10 +386,19 @@ final class OutlineDocument {
 
     @discardableResult
     func createSiblingAbove() -> OutlineNode? {
+        let previousFocusId = focusedNodeId
+
         guard let focused = focusedNode, focused.parent != nil else {
             // Create at root level (at beginning)
             let newNode = OutlineNode()
             root.addChild(newNode, at: 0)
+
+            // Register undo
+            undoManager.registerUndo(withTarget: self) { doc in
+                doc.deleteNodeForUndo(newNode.id, restoreFocusTo: previousFocusId)
+            }
+            undoManager.setActionName("New Bullet")
+
             structureDidChange()
 
             // Defer focus to next run loop to allow SwiftUI to create the view
@@ -383,6 +411,13 @@ final class OutlineDocument {
 
         let newNode = OutlineNode()
         focused.insertSiblingAbove(newNode)
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.deleteNodeForUndo(newNode.id, restoreFocusTo: previousFocusId)
+        }
+        undoManager.setActionName("New Bullet")
+
         structureDidChange()
 
         // Defer focus to next run loop to allow SwiftUI to create the view
@@ -399,9 +434,22 @@ final class OutlineDocument {
             return createSiblingBelow()
         }
 
+        let previousFocusId = focusedNodeId
+        let wasCollapsed = focused.isCollapsed
+
         let newNode = OutlineNode()
         focused.addChild(newNode, at: 0)
         focused.expand()
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.deleteNodeForUndo(newNode.id, restoreFocusTo: previousFocusId)
+            if wasCollapsed, let parent = doc.root.find(id: focused.id) {
+                parent.collapse()
+            }
+        }
+        undoManager.setActionName("New Bullet")
+
         structureDidChange()
 
         // Defer focus to next run loop to allow SwiftUI to create the view
@@ -420,11 +468,29 @@ final class OutlineDocument {
         // Check if this is the last node - if so, just clear it instead of deleting
         let visible = visibleNodes
         if visible.count == 1 && focused == visible.first {
-            // Last node - clear its content but keep it
+            // Last node - clear its content but keep it (with undo)
+            let oldTitle = focused.title
+            let oldBody = focused.body
             focused.title = ""
             focused.body = ""
+
+            undoManager.registerUndo(withTarget: self) { doc in
+                if let node = doc.root.find(id: focused.id) {
+                    node.title = oldTitle
+                    node.body = oldBody
+                }
+                doc.structureDidChange()
+            }
+            undoManager.setActionName("Clear Bullet")
+            structureDidChange()
             return
         }
+
+        // Save state for undo
+        let nodeCopy = focused.deepCopy()
+        let parentId = focused.parent?.id
+        let indexInParent = focused.indexInParent ?? 0
+        let previousFocusId = focusedNodeId
 
         // Move to trash before deleting
         TrashBin.shared.trash(focused)
@@ -445,6 +511,12 @@ final class OutlineDocument {
         // Ensure there's always at least one node
         ensureMinimumNode()
 
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.restoreNodeForUndo(nodeCopy, parentId: parentId, atIndex: indexInParent, restoreFocusTo: previousFocusId)
+        }
+        undoManager.setActionName("Delete")
+
         structureDidChange()
     }
 
@@ -455,12 +527,35 @@ final class OutlineDocument {
         // Check if this is the last top-level node - if so, just clear it instead of deleting
         let visible = visibleNodes
         if visible.count == 1 && focused == visible.first {
-            // Last node - clear its content and children but keep it
+            // Last node - clear its content and children but keep it (with undo)
+            let oldTitle = focused.title
+            let oldBody = focused.body
+            let oldChildren = focused.children.map { $0.deepCopy() }
+
             focused.title = ""
             focused.body = ""
             focused.children.removeAll()
+
+            undoManager.registerUndo(withTarget: self) { doc in
+                if let node = doc.root.find(id: focused.id) {
+                    node.title = oldTitle
+                    node.body = oldBody
+                    for child in oldChildren {
+                        node.addChild(child)
+                    }
+                }
+                doc.structureDidChange()
+            }
+            undoManager.setActionName("Clear Bullet")
+            structureDidChange()
             return
         }
+
+        // Save state for undo
+        let nodeCopy = focused.deepCopy()
+        let parentId = focused.parent?.id
+        let indexInParent = focused.indexInParent ?? 0
+        let previousFocusId = focusedNodeId
 
         // Move to trash before deleting (includes all children)
         TrashBin.shared.trash(focused)
@@ -482,6 +577,12 @@ final class OutlineDocument {
         // Ensure there's always at least one node
         ensureMinimumNode()
 
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.restoreNodeForUndo(nodeCopy, parentId: parentId, atIndex: indexInParent, restoreFocusTo: previousFocusId)
+        }
+        undoManager.setActionName("Delete")
+
         structureDidChange()
     }
 
@@ -494,6 +595,163 @@ final class OutlineDocument {
         }
     }
 
+    /// Delete all selected nodes and position cursor at nearest remaining bullet
+    func deleteSelected() {
+        guard !selectedNodeIds.isEmpty else { return }
+
+        // Find the topmost selected node to determine where to place cursor after
+        var topmostIndex = Int.max
+        let visible = visibleNodes
+
+        // Collect all selected nodes with their restore info
+        struct NodeRestoreInfo {
+            let nodeCopy: OutlineNode
+            let parentId: UUID?
+            let indexInParent: Int
+        }
+        var restoreInfos: [NodeRestoreInfo] = []
+        var nodesToDelete: [OutlineNode] = []
+
+        for nodeId in selectedNodeIds {
+            if let node = root.find(id: nodeId) {
+                // Only save top-level selected nodes (not children of other selected nodes)
+                let isChildOfSelected = node.pathFromRoot().dropLast().contains { selectedNodeIds.contains($0.id) }
+                if !isChildOfSelected {
+                    restoreInfos.append(NodeRestoreInfo(
+                        nodeCopy: node.deepCopy(),
+                        parentId: node.parent?.id,
+                        indexInParent: node.indexInParent ?? 0
+                    ))
+                }
+                nodesToDelete.append(node)
+
+                // Track topmost visible position
+                if let index = visible.firstIndex(of: node), index < topmostIndex {
+                    topmostIndex = index
+                }
+            }
+        }
+
+        let previousFocusId = focusedNodeId
+
+        // Find the next focus target (first non-selected node above the topmost selected)
+        var nextFocusId: UUID? = nil
+        if topmostIndex > 0 && topmostIndex < Int.max {
+            // Look for the nearest non-selected node above
+            for i in (0..<topmostIndex).reversed() {
+                let candidate = visible[i]
+                if !selectedNodeIds.contains(candidate.id) {
+                    nextFocusId = candidate.id
+                    break
+                }
+            }
+        }
+
+        // If no node above, try to find one below all selected
+        if nextFocusId == nil {
+            for node in visible {
+                if !selectedNodeIds.contains(node.id) {
+                    nextFocusId = node.id
+                    break
+                }
+            }
+        }
+
+        // Move all selected to trash and delete
+        for node in nodesToDelete {
+            TrashBin.shared.trash(node)
+            node.removeFromParent()
+        }
+
+        // Clear selection
+        selectedNodeIds.removeAll()
+
+        // Ensure minimum node exists
+        ensureMinimumNode()
+
+        // Set focus to nearest remaining node
+        if let focusId = nextFocusId {
+            focusedNodeId = focusId
+        } else {
+            // Focus first available node
+            focusedNodeId = root.children.first?.id
+        }
+
+        // Register undo - restore all deleted nodes
+        undoManager.registerUndo(withTarget: self) { doc in
+            // Restore in reverse order to maintain correct indices
+            for info in restoreInfos.reversed() {
+                doc.restoreNodeForUndo(info.nodeCopy, parentId: info.parentId, atIndex: info.indexInParent, restoreFocusTo: nil)
+            }
+            doc.focusedNodeId = previousFocusId
+            doc.structureDidChange()
+        }
+        undoManager.setActionName("Delete Selected")
+
+        structureDidChange()
+    }
+
+    // MARK: - Undo Helpers
+
+    /// Delete a node for undo (used when undoing creation)
+    private func deleteNodeForUndo(_ nodeId: UUID, restoreFocusTo focusId: UUID?) {
+        guard let node = root.find(id: nodeId) else { return }
+
+        // Save state for redo
+        let nodeCopy = node.deepCopy()
+        let parentId = node.parent?.id
+        let indexInParent = node.indexInParent ?? 0
+        let currentFocusId = focusedNodeId
+
+        node.removeFromParent()
+        ensureMinimumNode()
+        focusedNodeId = focusId
+
+        // Register redo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.restoreNodeForUndo(nodeCopy, parentId: parentId, atIndex: indexInParent, restoreFocusTo: currentFocusId)
+        }
+
+        structureDidChange()
+    }
+
+    /// Restore a node for undo (used when undoing deletion)
+    private func restoreNodeForUndo(_ nodeCopy: OutlineNode, parentId: UUID?, atIndex index: Int, restoreFocusTo focusId: UUID?) {
+        // Find the parent
+        let parent: OutlineNode
+        if let pid = parentId, let p = root.find(id: pid) {
+            parent = p
+        } else {
+            parent = root
+        }
+
+        // Check if node already exists (shouldn't happen, but be safe)
+        if root.find(id: nodeCopy.id) != nil {
+            return
+        }
+
+        // Insert at the correct position
+        let safeIndex = min(index, parent.children.count)
+        parent.addChild(nodeCopy, at: safeIndex)
+
+        // Save state for redo
+        let currentFocusId = focusedNodeId
+
+        // Restore focus
+        if let fid = focusId {
+            focusedNodeId = fid
+        } else {
+            focusedNodeId = nodeCopy.id
+        }
+
+        // Register redo (delete again)
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.deleteNodeForUndo(nodeCopy.id, restoreFocusTo: currentFocusId)
+        }
+
+        structureDidChange()
+    }
+
     // MARK: - Node Movement
 
     func moveUp() {
@@ -504,6 +762,13 @@ final class OutlineDocument {
 
         parent.children.remove(at: index)
         parent.children.insert(focused, at: index - 1)
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.moveDownForUndo(focused.id)
+        }
+        undoManager.setActionName("Move Up")
+
         structureDidChange()
     }
 
@@ -515,16 +780,34 @@ final class OutlineDocument {
 
         parent.children.remove(at: index)
         parent.children.insert(focused, at: index + 1)
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.moveUpForUndo(focused.id)
+        }
+        undoManager.setActionName("Move Down")
+
         structureDidChange()
     }
 
     func indent() {
         guard let focused = focusedNode,
+              let parent = focused.parent,
               let previousSibling = focused.previousSibling else { return }
+
+        let originalParentId = parent.id
+        let originalIndex = focused.indexInParent ?? 0
 
         focused.removeFromParent()
         previousSibling.addChild(focused)
         previousSibling.expand()
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.moveNodeForUndo(focused.id, toParentId: originalParentId, atIndex: originalIndex)
+        }
+        undoManager.setActionName("Indent")
+
         structureDidChange()
     }
 
@@ -536,8 +819,70 @@ final class OutlineDocument {
         // Get parent's index to insert after it
         guard let parentIndex = parent.indexInParent else { return }
 
+        let originalParentId = parent.id
+        let originalIndex = focused.indexInParent ?? 0
+
         focused.removeFromParent()
         grandparent.addChild(focused, at: parentIndex + 1)
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.moveNodeForUndo(focused.id, toParentId: originalParentId, atIndex: originalIndex)
+        }
+        undoManager.setActionName("Outdent")
+
+        structureDidChange()
+    }
+
+    // MARK: - Movement Undo Helpers
+
+    private func moveUpForUndo(_ nodeId: UUID) {
+        guard let node = root.find(id: nodeId),
+              let parent = node.parent,
+              let index = node.indexInParent,
+              index > 0 else { return }
+
+        parent.children.remove(at: index)
+        parent.children.insert(node, at: index - 1)
+
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.moveDownForUndo(nodeId)
+        }
+
+        structureDidChange()
+    }
+
+    private func moveDownForUndo(_ nodeId: UUID) {
+        guard let node = root.find(id: nodeId),
+              let parent = node.parent,
+              let index = node.indexInParent,
+              index < parent.children.count - 1 else { return }
+
+        parent.children.remove(at: index)
+        parent.children.insert(node, at: index + 1)
+
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.moveUpForUndo(nodeId)
+        }
+
+        structureDidChange()
+    }
+
+    private func moveNodeForUndo(_ nodeId: UUID, toParentId: UUID, atIndex: Int) {
+        guard let node = root.find(id: nodeId),
+              let newParent = root.find(id: toParentId) else { return }
+
+        let currentParentId = node.parent?.id ?? root.id
+        let currentIndex = node.indexInParent ?? 0
+
+        node.removeFromParent()
+        let safeIndex = min(atIndex, newParent.children.count)
+        newParent.addChild(node, at: safeIndex)
+
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.moveNodeForUndo(nodeId, toParentId: currentParentId, atIndex: currentIndex)
+        }
+
         structureDidChange()
     }
 }

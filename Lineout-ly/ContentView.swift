@@ -30,6 +30,12 @@ struct ContentView: View {
     /// Always on top mode - window floats above others
     @State private var isAlwaysOnTop: Bool = false
 
+    /// Per-tab collapsed node IDs (separate from document's node.isCollapsed)
+    @State private var collapsedNodeIds: Set<UUID> = []
+
+    /// Whether collapse state has been initialized
+    @State private var collapseStateInitialized: Bool = false
+
     /// Computed zoom ID
     private var zoomedNodeId: UUID? {
         get { UUID(uuidString: zoomedNodeIdString) }
@@ -72,28 +78,93 @@ struct ContentView: View {
         .task {
             await WindowManager.shared.loadDocumentIfNeeded()
 
-            // Check for pending zoom from session restore queue first
+            // Check for pending state from session restore queue first
             if !WindowManager.shared.pendingZoomQueue.isEmpty {
+                // Pop zoom state
                 let zoomId = WindowManager.shared.popPendingZoom()
                 print("[Session] Tab \(windowId) popped zoom: \(zoomId?.uuidString ?? "nil")")
                 if let zoomId {
                     setZoomedNodeId(zoomId)
                 }
+
+                // Pop collapse state
+                if let collapseState = WindowManager.shared.popPendingCollapseState() {
+                    collapsedNodeIds = collapseState
+                    collapseStateInitialized = true
+                    WindowManager.shared.registerTabCollapseState(windowId: windowId, collapsedNodeIds: collapseState)
+                    print("[Session] Tab \(windowId) popped collapse state: \(collapseState.count) collapsed nodes")
+                }
+
+                // Pop font size
+                if let restoredFontSize = WindowManager.shared.popPendingFontSize() {
+                    fontSize = restoredFontSize
+                    WindowManager.shared.registerTabFontSize(windowId: windowId, fontSize: restoredFontSize)
+                    print("[Session] Tab \(windowId) popped fontSize: \(restoredFontSize)")
+                }
+
+                // Pop always-on-top state
+                if let restoredAlwaysOnTop = WindowManager.shared.popPendingAlwaysOnTop() {
+                    isAlwaysOnTop = restoredAlwaysOnTop
+                    WindowManager.shared.registerTabAlwaysOnTop(windowId: windowId, isAlwaysOnTop: restoredAlwaysOnTop)
+                    print("[Session] Tab \(windowId) popped alwaysOnTop: \(restoredAlwaysOnTop)")
+                }
             }
-            // Then check for pending zoom from Cmd+T
+            // Then check for pending zoom from Cmd+T (new tab from current)
             else if let pending = WindowManager.shared.pendingZoom {
                 print("[Session] Tab \(windowId) using pendingZoom: \(pending)")
                 setZoomedNodeId(pending)
+                // Set focus to first child of zoomed node so cursor is visible and functional
+                if let doc = WindowManager.shared.document,
+                   let zoomedNode = doc.root.find(id: pending) {
+                    if let firstChild = zoomedNode.children.first {
+                        doc.focusedNodeId = firstChild.id
+                    } else {
+                        // If no children, focus the zoomed node itself
+                        doc.focusedNodeId = pending
+                    }
+                }
                 WindowManager.shared.pendingZoom = nil
+
+                // New tabs start with all expanded (inherits default font size and not always-on-top)
             }
+
+            // If no collapse state was restored, initialize from document
+            if !collapseStateInitialized {
+                if let doc = WindowManager.shared.document {
+                    // Initialize collapse state from document's node.isCollapsed
+                    var initialCollapsed = Set<UUID>()
+                    for node in doc.root.flattened() {
+                        if node.isCollapsed {
+                            initialCollapsed.insert(node.id)
+                        }
+                    }
+                    collapsedNodeIds = initialCollapsed
+                    WindowManager.shared.registerTabCollapseState(windowId: windowId, collapsedNodeIds: initialCollapsed)
+                }
+                collapseStateInitialized = true
+            }
+
+            // Register initial font size and always-on-top state
+            WindowManager.shared.registerTabFontSize(windowId: windowId, fontSize: fontSize)
+            WindowManager.shared.registerTabAlwaysOnTop(windowId: windowId, isAlwaysOnTop: isAlwaysOnTop)
         }
         .onDisappear {
             // Release all locks when window closes
             WindowManager.shared.releaseAllLocks(for: windowId)
+            // Unregister the tab to clean up state
+            WindowManager.shared.unregisterTab(windowId: windowId)
         }
         .onChange(of: zoomedNodeIdString) { _, newValue in
             // Track zoom changes for session save
             WindowManager.shared.registerTabZoom(windowId: windowId, zoomedNodeId: UUID(uuidString: newValue))
+        }
+        .onChange(of: fontSize) { _, newValue in
+            // Track font size changes for session save
+            WindowManager.shared.registerTabFontSize(windowId: windowId, fontSize: newValue)
+        }
+        .onChange(of: isAlwaysOnTop) { _, newValue in
+            // Track always-on-top changes for session save
+            WindowManager.shared.registerTabAlwaysOnTop(windowId: windowId, isAlwaysOnTop: newValue)
         }
         .onAppear {
             // Register this tab with WindowManager
@@ -146,13 +217,20 @@ struct ContentView: View {
             windowId: windowId,
             fontSize: $fontSize,
             isFocusMode: $isFocusMode,
-            isSearching: $isSearching
+            isSearching: $isSearching,
+            collapsedNodeIds: $collapsedNodeIds
         )
         .focusedSceneValue(\.document, document)
         .focusedSceneValue(\.fontSize, $fontSize)
         .focusedSceneValue(\.isFocusMode, $isFocusMode)
         .focusedSceneValue(\.isSearching, $isSearching)
         .focusedSceneValue(\.isAlwaysOnTop, $isAlwaysOnTop)
+        .focusedSceneValue(\.undoManager, document.undoManager)
+        .focusedSceneValue(\.collapsedNodeIds, $collapsedNodeIds)
+        .onChange(of: collapsedNodeIds) { _, newValue in
+            // Sync collapse state to WindowManager for session saving
+            WindowManager.shared.registerTabCollapseState(windowId: windowId, collapsedNodeIds: newValue)
+        }
     }
 }
 

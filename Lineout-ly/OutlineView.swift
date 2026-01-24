@@ -15,6 +15,7 @@ struct OutlineView: View {
     @Binding var fontSize: Double
     @Binding var isFocusMode: Bool  // Whether focus mode is enabled (dims non-focused bullets)
     @Binding var isSearching: Bool  // Whether search bar is visible
+    @Binding var collapsedNodeIds: Set<UUID>  // Per-tab collapse state
 
     @State private var hasSetInitialFocus = false
     @State private var searchQuery: String = ""
@@ -69,6 +70,7 @@ struct OutlineView: View {
                                 fontSize: $fontSize,
                                 isFocusMode: $isFocusMode,
                                 isSearching: $isSearching,
+                                collapsedNodeIds: $collapsedNodeIds,
                                 searchQuery: searchQuery
                             )
                             .id(item.node.id)
@@ -138,6 +140,7 @@ struct OutlineView: View {
     /// Visible nodes with their effective depth and tree lines (accounting for zoom)
     /// When zoomed, includes the zoomed node itself as the first item at depth 0
     /// Note: We reference structureVersion to ensure SwiftUI observes structural changes
+    /// Uses per-tab collapsedNodeIds for visibility calculation
     private var nodesWithDepth: [(node: OutlineNode, depth: Int, treeLines: [Bool])] {
         _ = document.structureVersion // Force observation of structural changes
 
@@ -148,7 +151,7 @@ struct OutlineView: View {
             result.append((node: zoomed, depth: 0, treeLines: []))
 
             // Then add its visible children with depth starting at 1
-            let children = zoomed.flattenedVisible()
+            let children = flattenedVisible(from: zoomed)
             for child in children {
                 let effectiveDepth = child.depth - zoomed.depth
                 let treeLines = calculateTreeLines(for: child, zoomDepth: zoomed.depth)
@@ -157,13 +160,26 @@ struct OutlineView: View {
         } else {
             // Not zoomed - show all visible nodes from root
             let zoomDepth = 0
-            for node in document.visibleNodes {
+            let visibleNodes = flattenedVisible(from: document.root)
+            for node in visibleNodes {
                 let effectiveDepth = max(0, node.depth - zoomDepth)
                 let treeLines = calculateTreeLines(for: node, zoomDepth: zoomDepth)
                 result.append((node: node, depth: effectiveDepth, treeLines: treeLines))
             }
         }
 
+        return result
+    }
+
+    /// Get flattened visible nodes using per-tab collapse state
+    private func flattenedVisible(from node: OutlineNode) -> [OutlineNode] {
+        var result: [OutlineNode] = []
+        for child in node.children {
+            result.append(child)
+            if !collapsedNodeIds.contains(child.id) {
+                result.append(contentsOf: flattenedVisible(from: child))
+            }
+        }
         return result
     }
 
@@ -378,7 +394,8 @@ extension Color {
     @Previewable @State var fontSize: Double = 13.0
     @Previewable @State var isFocusMode: Bool = false
     @Previewable @State var isSearching: Bool = false
+    @Previewable @State var collapsedNodeIds: Set<UUID> = []
 
-    OutlineView(document: document, zoomedNodeId: $zoomedNodeId, windowId: UUID(), fontSize: $fontSize, isFocusMode: $isFocusMode, isSearching: $isSearching)
+    OutlineView(document: document, zoomedNodeId: $zoomedNodeId, windowId: UUID(), fontSize: $fontSize, isFocusMode: $isFocusMode, isSearching: $isSearching, collapsedNodeIds: $collapsedNodeIds)
         .frame(width: 500, height: 700)
 }

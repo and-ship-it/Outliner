@@ -11,6 +11,7 @@ import SwiftUI
 struct BulletView: View {
     let node: OutlineNode
     let isFocused: Bool
+    var isCollapsed: Bool  // Per-tab collapse state (passed from parent)
     var scale: CGFloat = 1.0  // Scale factor for sizing
     var onTap: () -> Void = {}
 
@@ -37,7 +38,7 @@ struct BulletView: View {
                 // The actual bullet/disclosure
                 if node.hasChildren {
                     // Disclosure triangle
-                    Image(systemName: node.isCollapsed ? "chevron.right" : "chevron.down")
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                         .font(.system(size: chevronSize, weight: .semibold))
                         .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
                 } else {
@@ -64,7 +65,8 @@ struct BulletView: View {
                     n.addChild(OutlineNode(title: "Child"))
                     return n
                 }(),
-                isFocused: false
+                isFocused: false,
+                isCollapsed: false
             )
             Text("Has children, expanded")
         }
@@ -75,10 +77,10 @@ struct BulletView: View {
                 node: {
                     let n = OutlineNode(title: "Parent")
                     n.addChild(OutlineNode(title: "Child"))
-                    n.isCollapsed = true
                     return n
                 }(),
-                isFocused: false
+                isFocused: false,
+                isCollapsed: true
             )
             Text("Has children, collapsed")
         }
@@ -87,7 +89,8 @@ struct BulletView: View {
         HStack {
             BulletView(
                 node: OutlineNode(title: "Leaf"),
-                isFocused: false
+                isFocused: false,
+                isCollapsed: false
             )
             Text("No children")
         }
@@ -96,7 +99,8 @@ struct BulletView: View {
         HStack {
             BulletView(
                 node: OutlineNode(title: "Focused"),
-                isFocused: true
+                isFocused: true,
+                isCollapsed: false
             )
             Text("Focused")
         }

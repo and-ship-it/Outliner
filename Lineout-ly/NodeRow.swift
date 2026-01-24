@@ -20,6 +20,7 @@ struct NodeRow: View {
     @Binding var fontSize: Double
     @Binding var isFocusMode: Bool  // Whether focus mode is enabled
     @Binding var isSearching: Bool  // Whether search bar is visible
+    @Binding var collapsedNodeIds: Set<UUID>  // Per-tab collapse state
     var searchQuery: String = ""  // Current search query for highlighting
 
     // Base sizes (at default font size 13.0)
@@ -79,6 +80,11 @@ struct NodeRow: View {
         WindowManager.shared.isNodeLocked(node.id, for: windowId)
     }
 
+    /// Check if this node is collapsed in the current tab
+    var isCollapsedInTab: Bool {
+        collapsedNodeIds.contains(node.id)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             // Left padding
@@ -107,9 +113,14 @@ struct NodeRow: View {
 
             // Bullet with lock indicator
             ZStack(alignment: .topTrailing) {
-                BulletView(node: node, isFocused: isNodeFocused, scale: scale) {
+                BulletView(node: node, isFocused: isNodeFocused, isCollapsed: isCollapsedInTab, scale: scale) {
                     withAnimation(.easeOut(duration: 0.15)) {
-                        document.toggleNode(node)
+                        // Toggle per-tab collapse state
+                        if collapsedNodeIds.contains(node.id) {
+                            collapsedNodeIds.remove(node.id)
+                        } else {
+                            collapsedNodeIds.insert(node.id)
+                        }
                     }
                 }
 
@@ -142,7 +153,7 @@ struct NodeRow: View {
                 titleView
                     .fixedSize(horizontal: false, vertical: true)
 
-                if !node.isCollapsed && node.hasBody {
+                if !isCollapsedInTab && node.hasBody {
                     bodyView
                 }
             }
@@ -205,6 +216,7 @@ struct NodeRow: View {
             hasNextNode: hasNextNode,
             placeholder: isOnlyNode && node.title.isEmpty ? placeholderText : nil,
             searchQuery: searchQuery,
+            hasSelection: !document.selectedNodeIds.isEmpty,
             onFocusChange: { focused in
                 if focused && !isNodeFocused {
                     tryFocusNode()
@@ -252,19 +264,32 @@ struct NodeRow: View {
         switch action {
         case .collapse:
             withAnimation(.easeOut(duration: 0.15)) {
-                document.collapseFocused()
+                if let focused = document.focusedNode, focused.hasChildren {
+                    collapsedNodeIds.insert(focused.id)
+                }
             }
         case .expand:
             withAnimation(.easeOut(duration: 0.15)) {
-                document.expandFocused()
+                if let focused = document.focusedNode {
+                    collapsedNodeIds.remove(focused.id)
+                }
             }
         case .collapseAll:
-            if let node = document.focusedNode {
-                document.collapseAllChildren(of: node)
+            if let focused = document.focusedNode {
+                // Collapse all descendants that have children
+                for descendant in focused.flattened() {
+                    if descendant.hasChildren {
+                        collapsedNodeIds.insert(descendant.id)
+                    }
+                }
             }
         case .expandAll:
-            if let node = document.focusedNode {
-                document.expandAllChildren(of: node)
+            if let focused = document.focusedNode {
+                // Expand the focused node and all descendants
+                collapsedNodeIds.remove(focused.id)
+                for descendant in focused.flattened() {
+                    collapsedNodeIds.remove(descendant.id)
+                }
             }
         case .moveUp:
             withAnimation(.easeOut(duration: 0.15)) {
@@ -331,6 +356,10 @@ struct NodeRow: View {
             withAnimation(.easeOut(duration: 0.15)) {
                 document.deleteFocusedWithChildren()
             }
+        case .deleteSelected:
+            withAnimation(.easeOut(duration: 0.15)) {
+                document.deleteSelected()
+            }
         case .toggleTask:
             node.toggleTask()
         case .toggleFocusMode:
@@ -338,7 +367,12 @@ struct NodeRow: View {
         case .goHomeAndCollapseAll:
             withAnimation(.easeOut(duration: 0.2)) {
                 zoomedNodeId = nil
-                document.collapseAll()
+                // Collapse all nodes with children in per-tab state
+                for node in document.root.flattened() {
+                    if node.hasChildren {
+                        collapsedNodeIds.insert(node.id)
+                    }
+                }
             }
         case .toggleSearch:
             isSearching.toggle()
@@ -363,6 +397,7 @@ struct NodeRow: View {
     @Previewable @State var fontSize: Double = 13.0
     @Previewable @State var isFocusMode: Bool = false
     @Previewable @State var isSearching: Bool = false
+    @Previewable @State var collapsedNodeIds: Set<UUID> = []
 
     ScrollView {
         VStack(spacing: 0) {
@@ -376,7 +411,8 @@ struct NodeRow: View {
                     zoomedNodeId: $zoomedNodeId,
                     fontSize: $fontSize,
                     isFocusMode: $isFocusMode,
-                    isSearching: $isSearching
+                    isSearching: $isSearching,
+                    collapsedNodeIds: $collapsedNodeIds
                 )
             }
         }

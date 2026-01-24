@@ -225,6 +225,24 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
     }
 }
 
+// MARK: - Deep Copy
+
+extension OutlineNode {
+    /// Creates a deep copy of this node and all its children (preserving IDs)
+    func deepCopy() -> OutlineNode {
+        let copy = OutlineNode(
+            id: self.id,
+            title: self.title,
+            body: self.body,
+            isCollapsed: self.isCollapsed,
+            isTask: self.isTask,
+            isTaskCompleted: self.isTaskCompleted,
+            children: self.children.map { $0.deepCopy() }
+        )
+        return copy
+    }
+}
+
 // MARK: - Equatable (by identity)
 
 extension OutlineNode: Equatable {
