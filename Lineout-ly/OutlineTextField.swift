@@ -34,21 +34,32 @@ enum OutlineAction {
     case toggleSearch
 }
 
-/// Custom field editor with a thicker, more visible cursor
+/// Custom field editor with a thicker, taller, more visible cursor
 class ThickCursorTextView: NSTextView {
     static let cursorWidth: CGFloat = 2.5  // Thicker cursor (default is ~1)
+    static let heightMultiplier: CGFloat = 1.5  // 50% taller cursor
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
-        // Make the cursor wider
-        var thickerRect = rect
-        thickerRect.size.width = Self.cursorWidth
-        super.drawInsertionPoint(in: thickerRect, color: color, turnedOn: flag)
+        // Make the cursor wider and taller
+        var adjustedRect = rect
+        adjustedRect.size.width = Self.cursorWidth
+
+        // Increase height by 50% and adjust origin to keep it centered
+        let extraHeight = rect.size.height * (Self.heightMultiplier - 1.0)
+        adjustedRect.size.height = rect.size.height * Self.heightMultiplier
+        adjustedRect.origin.y -= extraHeight / 2  // Center the extra height
+
+        super.drawInsertionPoint(in: adjustedRect, color: color, turnedOn: flag)
     }
 
-    // Need to invalidate the cursor rect to account for the wider cursor
+    // Need to invalidate the cursor rect to account for the larger cursor
     override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
         var adjustedRect = rect
         adjustedRect.size.width = max(rect.size.width, Self.cursorWidth + 1)
+        // Account for taller cursor in redraw area
+        let extraHeight = rect.size.height * (Self.heightMultiplier - 1.0)
+        adjustedRect.size.height += extraHeight
+        adjustedRect.origin.y -= extraHeight / 2
         super.setNeedsDisplay(adjustedRect, avoidAdditionalLayout: flag)
     }
 }
