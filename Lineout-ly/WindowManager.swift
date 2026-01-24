@@ -43,21 +43,25 @@ final class WindowManager {
         do {
             let icloud = iCloudManager.shared
 
-            // Wait briefly for iCloud to initialize
-            try await Task.sleep(for: .milliseconds(500))
+            // Re-check iCloud availability
+            icloud.checkICloudAvailability()
 
             var doc: OutlineDocument
 
             if icloud.isICloudAvailable {
+                print("[WindowManager] Loading from iCloud...")
                 doc = try await icloud.loadDocument()
             } else {
+                print("[WindowManager] iCloud not available, loading from local...")
                 doc = try icloud.loadLocalDocument()
             }
 
             doc.autoSaveEnabled = true
             self.document = doc
+            print("[WindowManager] Document loaded, nodes: \(doc.root.children.count)")
 
         } catch {
+            print("[WindowManager] Load error: \(error)")
             loadError = error
         }
 

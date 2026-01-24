@@ -65,18 +65,19 @@ final class iCloudManager {
         guard FileManager.default.ubiquityIdentityToken != nil else {
             isICloudAvailable = false
             containerURL = nil
+            print("[iCloud] Not signed in to iCloud")
             return
         }
 
-        // Get the container URL (this may take a moment on first access)
-        Task {
-            if let url = FileManager.default.url(forUbiquityContainerIdentifier: containerIdentifier) {
-                self.containerURL = url
-                self.isICloudAvailable = true
-            } else {
-                self.isICloudAvailable = false
-                self.containerURL = nil
-            }
+        // Get the container URL synchronously
+        if let url = FileManager.default.url(forUbiquityContainerIdentifier: containerIdentifier) {
+            self.containerURL = url
+            self.isICloudAvailable = true
+            print("[iCloud] Container available at: \(url.path)")
+        } else {
+            self.isICloudAvailable = false
+            self.containerURL = nil
+            print("[iCloud] Container not available for: \(containerIdentifier)")
         }
     }
 
@@ -164,11 +165,21 @@ final class iCloudManager {
     /// Save the document immediately
     func save(_ document: OutlineDocument) async {
         guard let mainFile = mainFileURL else {
-            lastError = iCloudError.containerNotAvailable
+            print("[iCloud] Save failed: mainFileURL is nil, falling back to local")
+            // Fall back to local save
+            do {
+                try saveLocal(document)
+                print("[iCloud] Saved to local: \(localMainFileURL.path)")
+            } catch {
+                print("[iCloud] Local save failed: \(error)")
+                lastError = error
+            }
             return
         }
 
         let markdown = MarkdownCodec.serialize(document.root)
+        print("[iCloud] Saving to: \(mainFile.path)")
+        print("[iCloud] Content length: \(markdown.count) chars")
 
         // Use file coordination for safe writing
         let coordinator = NSFileCoordinator()
@@ -178,12 +189,15 @@ final class iCloudManager {
             do {
                 try markdown.write(to: url, atomically: true, encoding: .utf8)
                 self.lastError = nil
+                print("[iCloud] Save successful")
             } catch {
+                print("[iCloud] Save error: \(error)")
                 self.lastError = error
             }
         }
 
         if let error = coordinatorError {
+            print("[iCloud] Coordinator error: \(error)")
             lastError = error
         }
     }
