@@ -117,6 +117,12 @@ struct OutlineCommands: Commands {
             .keyboardShortcut(.escape, modifiers: [])
             .disabled(document == nil)
 
+            Button("Go Home") {
+                goHomeAndCollapseAll()
+            }
+            .keyboardShortcut("h", modifiers: [.command, .shift])
+            .disabled(document == nil)
+
             Divider()
 
             Button("Make Larger") {
@@ -255,6 +261,13 @@ struct OutlineCommands: Commands {
     private func zoomToRoot() {
         withAnimation(.easeOut(duration: 0.2)) {
             zoomedNodeIdBinding?.wrappedValue = nil
+        }
+    }
+
+    private func goHomeAndCollapseAll() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            zoomedNodeIdBinding?.wrappedValue = nil
+            document?.collapseAll()
         }
     }
 

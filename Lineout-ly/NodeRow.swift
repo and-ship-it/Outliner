@@ -181,8 +181,15 @@ struct NodeRow: View {
                 }
             },
             onAction: handleAction,
-            onSplitLine: { textAfter in
-                document.createSiblingBelow(withTitle: textAfter)
+            onSplitLine: { [self] textAfter in
+                // If focused node is the zoomed node, create a child instead (sibling would be outside zoom)
+                if node.id == zoomedNodeId {
+                    if let newNode = document.createChild() {
+                        newNode.title = textAfter
+                    }
+                } else {
+                    document.createSiblingBelow(withTitle: textAfter)
+                }
             },
             font: .systemFont(ofSize: CGFloat(fontSize)),
             fontWeight: effectiveDepth == 0 ? .medium : .regular
@@ -245,9 +252,19 @@ struct NodeRow: View {
                 document.outdent()
             }
         case .createSiblingAbove:
-            document.createSiblingAbove()
+            // If focused node is the zoomed node, create a child instead (sibling would be outside zoom)
+            if node.id == zoomedNodeId {
+                document.createChild()
+            } else {
+                document.createSiblingAbove()
+            }
         case .createSiblingBelow:
-            document.createSiblingBelow()
+            // If focused node is the zoomed node, create a child instead (sibling would be outside zoom)
+            if node.id == zoomedNodeId {
+                document.createChild()
+            } else {
+                document.createSiblingBelow()
+            }
         case .navigateUp:
             document.moveFocusUp()
         case .navigateDown:
@@ -283,6 +300,11 @@ struct NodeRow: View {
             node.toggleTask()
         case .toggleFocusMode:
             isFocusMode.toggle()
+        case .goHomeAndCollapseAll:
+            withAnimation(.easeOut(duration: 0.2)) {
+                zoomedNodeId = nil
+                document.collapseAll()
+            }
         }
     }
     #endif

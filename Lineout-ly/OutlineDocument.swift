@@ -191,6 +191,14 @@ final class OutlineDocument {
         structureDidChange()
     }
 
+    /// Collapse all nodes in the entire document
+    func collapseAll() {
+        for child in root.children {
+            child.collapseAll()
+        }
+        structureDidChange()
+    }
+
     // MARK: - Zoom Operations
 
     func zoomIn() {
