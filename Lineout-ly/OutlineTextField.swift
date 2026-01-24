@@ -38,16 +38,19 @@ enum OutlineAction {
 class ThickCursorTextView: NSTextView {
     static let cursorWidth: CGFloat = 3.75  // Extra thick cursor (default is ~1)
     static let heightMultiplier: CGFloat = 2.25  // 125% taller cursor
+    static let verticalCenterOffset: CGFloat = 0.15  // Shift up to center with text middle
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
         // Make the cursor wider and taller
         var adjustedRect = rect
         adjustedRect.size.width = Self.cursorWidth
 
-        // Increase height by 50% and adjust origin to keep it centered
+        // Increase height and center with text middle (not baseline)
         let extraHeight = rect.size.height * (Self.heightMultiplier - 1.0)
         adjustedRect.size.height = rect.size.height * Self.heightMultiplier
-        adjustedRect.origin.y -= extraHeight / 2  // Center the extra height
+        // Shift up: center the extra height + additional offset to center with text body
+        let centeringOffset = rect.size.height * Self.verticalCenterOffset
+        adjustedRect.origin.y -= (extraHeight / 2) + centeringOffset
 
         super.drawInsertionPoint(in: adjustedRect, color: color, turnedOn: flag)
     }
@@ -56,10 +59,11 @@ class ThickCursorTextView: NSTextView {
     override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
         var adjustedRect = rect
         adjustedRect.size.width = max(rect.size.width, Self.cursorWidth + 1)
-        // Account for taller cursor in redraw area
+        // Account for taller cursor and centering offset in redraw area
         let extraHeight = rect.size.height * (Self.heightMultiplier - 1.0)
-        adjustedRect.size.height += extraHeight
-        adjustedRect.origin.y -= extraHeight / 2
+        let centeringOffset = rect.size.height * Self.verticalCenterOffset
+        adjustedRect.size.height += extraHeight + centeringOffset
+        adjustedRect.origin.y -= (extraHeight / 2) + centeringOffset
         super.setNeedsDisplay(adjustedRect, avoidAdditionalLayout: flag)
     }
 }
