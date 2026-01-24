@@ -25,7 +25,7 @@ struct NodeRow: View {
         HStack(alignment: .top, spacing: 0) {
             // Left padding
             Spacer()
-                .frame(width: 12)
+                .frame(width: 16)
 
             // Indentation with tree lines
             if effectiveDepth > 0 {
@@ -35,22 +35,16 @@ struct NodeRow: View {
                             // Vertical line if there are more siblings at this level
                             if level < treeLines.count && treeLines[level] {
                                 Rectangle()
-                                    .fill(lineColor)
+                                    .fill(Color.gray.opacity(0.25))
                                     .frame(width: 1)
-                                    .offset(x: -indentWidth / 2 + 3)
+                                    .padding(.leading, indentWidth + 10)
+                                    .padding(.top, -6)
+                                    .padding(.bottom, -4)
                             }
                         }
                         .frame(width: indentWidth)
                     }
                 }
-            }
-
-            // Horizontal connector line for children
-            if effectiveDepth > 0 {
-                Rectangle()
-                    .fill(lineColor)
-                    .frame(width: 8, height: 1)
-                    .offset(y: 10)
             }
 
             // Bullet

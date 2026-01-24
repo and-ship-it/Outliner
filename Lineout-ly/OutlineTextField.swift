@@ -245,6 +245,16 @@ struct OutlineTextField: NSViewRepresentable {
                 }
                 // Only navigate to next bullet if cursor is on last visual line
                 if isAtLastVisualLine(textView) {
+                    let cursorLocation = textView.selectedRange().location
+                    let textLength = textView.string.count
+
+                    // If cursor is not at end of text, move to end first
+                    if cursorLocation < textLength {
+                        textView.setSelectedRange(NSRange(location: textLength, length: 0))
+                        return true
+                    }
+
+                    // Cursor is at end, try to navigate to next bullet
                     parent.onAction?(.navigateDown)
                     return true
                 }
@@ -271,6 +281,7 @@ struct OutlineTextField: NSViewRepresentable {
             case #selector(NSResponder.insertNewline(_:)):
                 // Enter creates a new sibling bullet
                 // Behavior depends on cursor position:
+                // - Empty bullet: create sibling below
                 // - Beginning (with text): create above
                 // - End: create below (empty)
                 // - Middle: split line, create below with remaining text
@@ -278,7 +289,10 @@ struct OutlineTextField: NSViewRepresentable {
                 let text = textView.string
                 let textLength = text.count
 
-                if cursorPosition == 0 && textLength > 0 {
+                // Empty bullet - always create sibling below
+                if textLength == 0 {
+                    parent.onAction?(.createSiblingBelow)
+                } else if cursorPosition == 0 {
                     // Cursor at beginning of non-empty line -> create bullet above
                     parent.onAction?(.createSiblingAbove)
                 } else if cursorPosition >= textLength {
@@ -308,15 +322,29 @@ struct OutlineTextField: NSViewRepresentable {
         /// Determines if the cursor is on the first visual line of wrapped text
         private func isAtFirstVisualLine(_ textView: NSTextView) -> Bool {
             guard let layoutManager = textView.layoutManager,
-                  let textContainer = textView.textContainer else {
+                  let _ = textView.textContainer else {
                 return true // Default to allowing navigation if we can't determine
+            }
+
+            let textLength = textView.string.count
+            let totalGlyphs = layoutManager.numberOfGlyphs
+
+            // Empty text - always allow navigation up
+            if totalGlyphs == 0 || textLength == 0 {
+                return true
             }
 
             let selectedRange = textView.selectedRange()
             let cursorLocation = selectedRange.location
 
-            // Get the glyph index for the cursor position
-            let glyphIndex = layoutManager.glyphIndexForCharacter(at: cursorLocation)
+            // Edge case: cursor is at the very end of the text
+            // For this case, check if all text fits on one line
+            let glyphIndex: Int
+            if cursorLocation >= textLength {
+                glyphIndex = totalGlyphs - 1
+            } else {
+                glyphIndex = layoutManager.glyphIndexForCharacter(at: cursorLocation)
+            }
 
             // Find which line fragment the cursor is on
             var lineFragmentRange = NSRange(location: 0, length: 0)
