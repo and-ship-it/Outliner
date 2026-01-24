@@ -7,25 +7,50 @@
 
 import SwiftUI
 
-/// A single row in the outline, displaying a node with proper indentation
+/// A single row in the outline, displaying a node with proper indentation and tree lines
 struct NodeRow: View {
     @Bindable var document: OutlineDocument
     let node: OutlineNode
     let effectiveDepth: Int
+    let treeLines: [Bool]  // Which depth levels should show a vertical line
 
-    private let indentWidth: CGFloat = 24
-    private let rowMinHeight: CGFloat = 32
+    private let indentWidth: CGFloat = 20
+    private let lineColor = Color.gray.opacity(0.3)
 
     var isNodeFocused: Bool {
         document.focusedNodeId == node.id
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            // Indentation
+        HStack(alignment: .top, spacing: 0) {
+            // Left padding
+            Spacer()
+                .frame(width: 12)
+
+            // Indentation with tree lines
             if effectiveDepth > 0 {
-                Spacer()
-                    .frame(width: CGFloat(effectiveDepth) * indentWidth)
+                HStack(spacing: 0) {
+                    ForEach(0..<effectiveDepth, id: \.self) { level in
+                        ZStack {
+                            // Vertical line if there are more siblings at this level
+                            if level < treeLines.count && treeLines[level] {
+                                Rectangle()
+                                    .fill(lineColor)
+                                    .frame(width: 1)
+                                    .offset(x: -indentWidth / 2 + 3)
+                            }
+                        }
+                        .frame(width: indentWidth)
+                    }
+                }
+            }
+
+            // Horizontal connector line for children
+            if effectiveDepth > 0 {
+                Rectangle()
+                    .fill(lineColor)
+                    .frame(width: 8, height: 1)
+                    .offset(y: 10)
             }
 
             // Bullet
@@ -34,27 +59,22 @@ struct NodeRow: View {
                     document.toggleNode(node)
                 }
             }
-            .alignmentGuide(.firstTextBaseline) { d in
-                d[VerticalAlignment.center]
-            }
+            .padding(.top, 2)
 
             // Content
-            VStack(alignment: .leading, spacing: 4) {
-                // Title
+            VStack(alignment: .leading, spacing: 2) {
                 titleView
+                    .fixedSize(horizontal: false, vertical: true)
 
-                // Body (if expanded and has body)
                 if !node.isCollapsed && node.hasBody {
                     bodyView
                 }
             }
-            .padding(.leading, 8)
+            .padding(.leading, 6)
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 12)
         }
-        .frame(minHeight: rowMinHeight, alignment: .top)
-        .padding(.vertical, 2)
-        .padding(.horizontal, 16)
+        .padding(.vertical, 1)
         .contentShape(Rectangle())
         .onTapGesture {
             document.setFocus(node)
@@ -79,7 +99,6 @@ struct NodeRow: View {
             },
             onAction: handleAction,
             onSplitLine: { textAfter in
-                // Create a new sibling below with the split text
                 document.createSiblingBelow(withTitle: textAfter)
             },
             fontWeight: effectiveDepth == 0 ? .medium : .regular
@@ -157,6 +176,12 @@ struct NodeRow: View {
             withAnimation(.easeOut(duration: 0.2)) {
                 document.zoomToRoot()
             }
+        case .progressiveSelectDown:
+            break
+        case .deleteWithChildren:
+            withAnimation(.easeOut(duration: 0.15)) {
+                document.deleteFocusedWithChildren()
+            }
         }
     }
     #endif
@@ -168,7 +193,7 @@ struct NodeRow: View {
             .foregroundStyle(.secondary)
             .lineLimit(nil)
             .padding(.leading, 4)
-            .padding(.top, 2)
+            .padding(.top, 1)
     }
 }
 
@@ -181,7 +206,8 @@ struct NodeRow: View {
                 NodeRow(
                     document: document,
                     node: node,
-                    effectiveDepth: node.depth
+                    effectiveDepth: node.depth,
+                    treeLines: []
                 )
             }
         }

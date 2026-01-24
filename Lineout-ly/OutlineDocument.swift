@@ -276,6 +276,9 @@ final class OutlineDocument: ObservableObject {
     func deleteFocused() {
         guard let focused = focusedNode else { return }
 
+        // Move to trash before deleting
+        TrashBin.shared.trash(focused)
+
         // Find next node to focus
         let visible = visibleNodes
         if let index = visible.firstIndex(of: focused) {
@@ -288,6 +291,29 @@ final class OutlineDocument: ObservableObject {
             }
         }
 
+        focused.removeFromParent()
+        structureDidChange()
+    }
+
+    /// Delete the focused node and all its children
+    func deleteFocusedWithChildren() {
+        guard let focused = focusedNode else { return }
+
+        // Move to trash before deleting (includes all children)
+        TrashBin.shared.trash(focused)
+
+        // Find next sibling or parent to focus (skip over children since they'll be deleted)
+        if let nextSibling = focused.nextSibling {
+            focusedNodeId = nextSibling.id
+        } else if let prevSibling = focused.previousSibling {
+            focusedNodeId = prevSibling.id
+        } else if let parent = focused.parent, !parent.isRoot {
+            focusedNodeId = parent.id
+        } else {
+            focusedNodeId = nil
+        }
+
+        // Remove the node (children are automatically removed with it)
         focused.removeFromParent()
         structureDidChange()
     }

@@ -34,7 +34,8 @@ struct OutlineView: View {
                             NodeRow(
                                 document: document,
                                 node: item.node,
-                                effectiveDepth: item.depth
+                                effectiveDepth: item.depth,
+                                treeLines: item.treeLines
                             )
                             .id(item.node.id)
                         }
@@ -69,14 +70,39 @@ struct OutlineView: View {
 
     // MARK: - Computed
 
-    /// Visible nodes with their effective depth (accounting for zoom)
+    /// Visible nodes with their effective depth and tree lines (accounting for zoom)
     /// Note: We reference structureVersion to ensure SwiftUI observes structural changes
-    private var nodesWithDepth: [(node: OutlineNode, depth: Int)] {
+    private var nodesWithDepth: [(node: OutlineNode, depth: Int, treeLines: [Bool])] {
         _ = document.structureVersion // Force observation of structural changes
         let zoomDepth = document.zoomedNode?.depth ?? 0
         return document.visibleNodes.map { node in
-            (node: node, depth: max(0, node.depth - zoomDepth))
+            let effectiveDepth = max(0, node.depth - zoomDepth)
+            let treeLines = calculateTreeLines(for: node, zoomDepth: zoomDepth)
+            return (node: node, depth: effectiveDepth, treeLines: treeLines)
         }
+    }
+
+    /// Calculate which depth levels should show vertical tree lines
+    /// A line appears at a level if the ancestor at that level has more siblings below it
+    private func calculateTreeLines(for node: OutlineNode, zoomDepth: Int) -> [Bool] {
+        var lines: [Bool] = []
+        var current = node
+
+        // Walk up the ancestor chain (excluding the node itself)
+        while let parent = current.parent {
+            // Don't go above the zoom level
+            if parent.id == document.zoomedNodeId || parent.isRoot {
+                break
+            }
+
+            // Check if 'current' has siblings after it
+            let hasSiblingsBelow = current.nextSibling != nil
+            lines.insert(hasSiblingsBelow, at: 0)
+
+            current = parent
+        }
+
+        return lines
     }
 
     // MARK: - Subviews
