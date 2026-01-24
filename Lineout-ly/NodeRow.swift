@@ -25,24 +25,24 @@ struct NodeRow: View {
     // Base sizes (at default font size 13.0)
     private let baseFontSize: CGFloat = 13.0
     private let baseIndentWidth: CGFloat = 20
-    private let baseLeftPadding: CGFloat = 16
     private let baseTreeLineLeading: CGFloat = 30  // indentWidth + 10
     private let baseLockIconSize: CGFloat = 8
     private let baseCheckboxSize: CGFloat = 14
     private let baseContentLeading: CGFloat = 6
-    private let baseMinTrailing: CGFloat = 12
+
+    // Fixed window-level padding (not scaled) - Apple HIG premium spacing
+    private let leftPadding: CGFloat = 32
+    private let minTrailing: CGFloat = 32
 
     // Scale factor based on font size
     private var scale: CGFloat { CGFloat(fontSize) / baseFontSize }
 
-    // Scaled sizes
+    // Scaled sizes (content-level spacing)
     private var indentWidth: CGFloat { baseIndentWidth * scale }
-    private var leftPadding: CGFloat { baseLeftPadding * scale }
     private var treeLineLeading: CGFloat { baseTreeLineLeading * scale }
     private var lockIconSize: CGFloat { baseLockIconSize * scale }
     private var checkboxSize: CGFloat { baseCheckboxSize * scale }
     private var contentLeading: CGFloat { baseContentLeading * scale }
-    private var minTrailing: CGFloat { baseMinTrailing * scale }
 
     private let lineColor = Color.gray.opacity(0.3)
 

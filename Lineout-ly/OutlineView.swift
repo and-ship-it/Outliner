@@ -74,7 +74,9 @@ struct OutlineView: View {
                             .id(item.node.id)
                         }
                     }
-                    .padding(.vertical, 8 * scale)
+                    // Fixed window-level padding (Apple HIG premium spacing)
+                    .padding(.top, isSearching ? 16 : 40)
+                    .padding(.bottom, zoomedNodeId != nil ? 16 : 48)
                 }
                 .onChange(of: document.focusedNodeId) { _, newId in
                     if let id = newId {
@@ -218,8 +220,9 @@ struct OutlineView: View {
             .buttonStyle(.plain)
             .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding(.horizontal, 16 * scale)
-        .padding(.vertical, 8 * scale)
+        .padding(.horizontal, 32)  // Fixed padding to match content
+        .padding(.top, 16)
+        .padding(.bottom, 12)
         .background(Color.textBackgroundColor)
         .overlay(
             Rectangle()
@@ -291,8 +294,9 @@ struct OutlineView: View {
             Spacer()
         }
         .foregroundStyle(.secondary.opacity(0.7))
-        .padding(.horizontal, 16 * scale)
-        .padding(.vertical, 8 * scale)
+        .padding(.horizontal, 32)  // Fixed padding to match content
+        .padding(.top, 12)
+        .padding(.bottom, 16)
         .background(Color.textBackgroundColor)
     }
 
