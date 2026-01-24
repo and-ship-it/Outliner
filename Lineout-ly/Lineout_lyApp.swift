@@ -12,6 +12,10 @@ import AppKit
 
 @main
 struct Lineout_lyApp: App {
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #endif
+
     var body: some Scene {
         // Single-document app with iCloud sync
         WindowGroup("", id: "main") {
@@ -37,6 +41,7 @@ struct OutlineCommands: Commands {
     @FocusedValue(\.document) var document
     @FocusedValue(\.zoomedNodeId) var zoomedNodeIdBinding
     @FocusedValue(\.fontSize) var fontSizeBinding
+    @FocusedValue(\.isFocusMode) var focusModeBinding
 
     var body: some Commands {
         // File menu additions
@@ -128,6 +133,14 @@ struct OutlineCommands: Commands {
                 resetFontSize()
             }
             .keyboardShortcut("0", modifiers: .command)
+
+            Divider()
+
+            Toggle("Focus Mode", isOn: Binding(
+                get: { focusModeBinding?.wrappedValue ?? false },
+                set: { focusModeBinding?.wrappedValue = $0 }
+            ))
+            .keyboardShortcut("f", modifiers: [.command, .shift])
         }
 
         // Outline menu
@@ -303,3 +316,36 @@ extension FocusedValues {
         set { self[FocusedFontSizeKey.self] = newValue }
     }
 }
+
+// MARK: - Focused Value for Focus Mode
+
+struct FocusedFocusModeKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
+extension FocusedValues {
+    var isFocusMode: Binding<Bool>? {
+        get { self[FocusedFocusModeKey.self] }
+        set { self[FocusedFocusModeKey.self] = newValue }
+    }
+}
+
+// MARK: - App Delegate
+
+#if os(macOS)
+class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Keep the app running when all windows are closed
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
+    }
+
+    /// Reopen main window when dock icon is clicked and no windows are open
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            // No visible windows, create a new one
+            NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+        }
+        return true
+    }
+}
+#endif

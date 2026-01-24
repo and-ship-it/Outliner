@@ -29,6 +29,7 @@ enum OutlineAction {
     case progressiveSelectDown
     case deleteWithChildren
     case toggleTask
+    case toggleFocusMode
 }
 
 /// Host view that manages the text field and handles dynamic sizing
@@ -680,6 +681,13 @@ class OutlineNSTextField: NSTextField {
             if hasCommand && hasShift {
                 // Cmd+Shift+L: toggle task mode
                 actionHandler?(.toggleTask)
+                return true
+            }
+
+        case 3: // F
+            if hasCommand && hasShift {
+                // Cmd+Shift+F: toggle focus mode
+                actionHandler?(.toggleFocusMode)
                 return true
             }
 

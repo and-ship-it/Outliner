@@ -18,6 +18,7 @@ struct NodeRow: View {
     let windowId: UUID
     @Binding var zoomedNodeId: UUID?
     @Binding var fontSize: Double
+    @Binding var isFocusMode: Bool  // Whether focus mode is enabled
 
     private let indentWidth: CGFloat = 20
     private let lineColor = Color.gray.opacity(0.3)
@@ -110,6 +111,8 @@ struct NodeRow: View {
         .onTapGesture {
             tryFocusNode()
         }
+        // Dim non-focused nodes in focus mode
+        .opacity(isFocusMode && !isNodeFocused ? 0.3 : 1.0)
     }
 
     /// Try to focus this node, acquiring lock if needed
@@ -257,6 +260,8 @@ struct NodeRow: View {
             }
         case .toggleTask:
             node.toggleTask()
+        case .toggleFocusMode:
+            isFocusMode.toggle()
         }
     }
     #endif
@@ -276,6 +281,7 @@ struct NodeRow: View {
     @Previewable @State var document = OutlineDocument.createSample()
     @Previewable @State var zoomedNodeId: UUID? = nil
     @Previewable @State var fontSize: Double = 13.0
+    @Previewable @State var isFocusMode: Bool = false
 
     ScrollView {
         VStack(spacing: 0) {
@@ -287,7 +293,8 @@ struct NodeRow: View {
                     treeLines: [],
                     windowId: UUID(),
                     zoomedNodeId: $zoomedNodeId,
-                    fontSize: $fontSize
+                    fontSize: $fontSize,
+                    isFocusMode: $isFocusMode
                 )
             }
         }

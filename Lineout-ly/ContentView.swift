@@ -21,6 +21,9 @@ struct ContentView: View {
     /// Font size for this window (persisted per scene/window)
     @SceneStorage("fontSize") private var fontSize: Double = 13.0
 
+    /// Focus mode - dims everything except the focused bullet
+    @State private var isFocusMode: Bool = false
+
     /// Computed zoom ID
     private var zoomedNodeId: UUID? {
         get { UUID(uuidString: zoomedNodeIdString) }
@@ -105,10 +108,12 @@ struct ContentView: View {
             document: document,
             zoomedNodeId: zoomBinding,
             windowId: windowId,
-            fontSize: $fontSize
+            fontSize: $fontSize,
+            isFocusMode: $isFocusMode
         )
         .focusedSceneValue(\.document, document)
         .focusedSceneValue(\.fontSize, $fontSize)
+        .focusedSceneValue(\.isFocusMode, $isFocusMode)
     }
 }
 

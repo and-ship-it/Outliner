@@ -13,6 +13,7 @@ struct OutlineView: View {
     @Binding var zoomedNodeId: UUID?
     let windowId: UUID
     @Binding var fontSize: Double
+    @Binding var isFocusMode: Bool  // Whether focus mode is enabled (dims non-focused bullets)
 
     @State private var hasSetInitialFocus = false
 
@@ -52,7 +53,8 @@ struct OutlineView: View {
                                 isOnlyNode: isOnlyOne,
                                 windowId: windowId,
                                 zoomedNodeId: $zoomedNodeId,
-                                fontSize: $fontSize
+                                fontSize: $fontSize,
+                                isFocusMode: $isFocusMode
                             )
                             .id(item.node.id)
                         }
@@ -245,7 +247,8 @@ extension Color {
     @Previewable @State var document = OutlineDocument.createSample()
     @Previewable @State var zoomedNodeId: UUID? = nil
     @Previewable @State var fontSize: Double = 13.0
+    @Previewable @State var isFocusMode: Bool = false
 
-    OutlineView(document: document, zoomedNodeId: $zoomedNodeId, windowId: UUID(), fontSize: $fontSize)
+    OutlineView(document: document, zoomedNodeId: $zoomedNodeId, windowId: UUID(), fontSize: $fontSize, isFocusMode: $isFocusMode)
         .frame(width: 500, height: 700)
 }
