@@ -38,7 +38,7 @@ enum OutlineAction {
 class ThickCursorTextView: NSTextView {
     static let cursorWidth: CGFloat = 3.75  // Extra thick cursor (default is ~1)
     static let heightMultiplier: CGFloat = 2.25  // 125% taller cursor
-    static let verticalCenterOffset: CGFloat = 0.15  // Shift up to center with text middle
+    static let verticalCenterOffset: CGFloat = 0.35  // Shift up to center with text middle
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
         // Make the cursor wider and taller
