@@ -44,6 +44,7 @@ struct OutlineCommands: Commands {
     @FocusedValue(\.isFocusMode) var focusModeBinding
     @FocusedValue(\.isSearching) var searchingBinding
     @AppStorage("autocompleteEnabled") var autocompleteEnabled: Bool = true
+    @AppStorage("restorePreviousSession") var restorePreviousSession: Bool = true
 
     var body: some Commands {
         // File menu additions
@@ -162,12 +163,7 @@ struct OutlineCommands: Commands {
             ))
             .keyboardShortcut("f", modifiers: [.command, .shift])
 
-            Divider()
-
-            Toggle("Restore Previous Session on Launch", isOn: Binding(
-                get: { SessionManager.shared.restorePreviousSession },
-                set: { SessionManager.shared.restorePreviousSession = $0 }
-            ))
+            Toggle("Restore Previous Session on Launch", isOn: $restorePreviousSession)
         }
 
         // Outline menu
