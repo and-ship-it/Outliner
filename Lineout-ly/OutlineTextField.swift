@@ -36,8 +36,8 @@ enum OutlineAction {
 
 /// Custom field editor with a thicker, taller, more visible cursor
 class ThickCursorTextView: NSTextView {
-    static let cursorWidth: CGFloat = 2.5  // Thicker cursor (default is ~1)
-    static let heightMultiplier: CGFloat = 1.5  // 50% taller cursor
+    static let cursorWidth: CGFloat = 3.75  // Extra thick cursor (default is ~1)
+    static let heightMultiplier: CGFloat = 2.25  // 125% taller cursor
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
         // Make the cursor wider and taller
