@@ -34,6 +34,39 @@ enum OutlineAction {
     case toggleSearch
 }
 
+/// Custom field editor with a thicker, more visible cursor
+class ThickCursorTextView: NSTextView {
+    static let cursorWidth: CGFloat = 2.5  // Thicker cursor (default is ~1)
+
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        // Make the cursor wider
+        var thickerRect = rect
+        thickerRect.size.width = Self.cursorWidth
+        super.drawInsertionPoint(in: thickerRect, color: color, turnedOn: flag)
+    }
+
+    // Need to invalidate the cursor rect to account for the wider cursor
+    override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+        var adjustedRect = rect
+        adjustedRect.size.width = max(rect.size.width, Self.cursorWidth + 1)
+        super.setNeedsDisplay(adjustedRect, avoidAdditionalLayout: flag)
+    }
+}
+
+/// Custom cell that uses our thick cursor field editor
+class ThickCursorTextFieldCell: NSTextFieldCell {
+    private var customFieldEditor: ThickCursorTextView?
+
+    override func fieldEditor(for controlView: NSView) -> NSTextView? {
+        if customFieldEditor == nil {
+            customFieldEditor = ThickCursorTextView()
+            customFieldEditor?.isFieldEditor = true
+            customFieldEditor?.isRichText = false
+        }
+        return customFieldEditor
+    }
+}
+
 /// Host view that manages the text field and handles dynamic sizing
 class WrappingTextFieldHost: NSView {
     var textField: NSTextField?
@@ -507,6 +540,27 @@ class OutlineNSTextField: NSTextField {
     private var currentSuggestion: String = ""
     private(set) var isShowingSuggestion: Bool = false
     private var actualText: String = ""  // The real text without suggestion
+
+    // Custom field editor for thick cursor
+    private var thickCursorEditor: ThickCursorTextView?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setupThickCursorCell()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupThickCursorCell()
+    }
+
+    private func setupThickCursorCell() {
+        // Create and set a custom cell that uses our thick cursor field editor
+        let customCell = ThickCursorTextFieldCell()
+        customCell.wraps = true
+        customCell.isScrollable = false
+        self.cell = customCell
+    }
 
     /// Get the actual text without any suggestion
     func getActualText() -> String {
