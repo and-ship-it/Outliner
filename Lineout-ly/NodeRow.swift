@@ -325,6 +325,8 @@ struct NodeRow: View {
             break
         case .progressiveSelectAll:
             document.expandSelectionProgressively()
+        case .clearSelection:
+            document.clearSelection()
         case .deleteWithChildren:
             withAnimation(.easeOut(duration: 0.15)) {
                 document.deleteFocusedWithChildren()

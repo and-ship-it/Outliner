@@ -28,6 +28,7 @@ enum OutlineAction {
     case zoomToRoot
     case progressiveSelectDown
     case progressiveSelectAll  // Cmd+A progressive selection
+    case clearSelection        // Escape to clear selection
     case deleteWithChildren
     case toggleTask
     case toggleFocusMode
@@ -810,11 +811,18 @@ class OutlineNSTextField: NSTextField {
             }
 
         case 53: // Escape
-            // Clear suggestion first if showing, otherwise zoom to root
+            // Clear suggestion first if showing
             if isShowingSuggestion {
                 clearSuggestion()
                 return true
             }
+            // Then clear multi-selection if active
+            if cmdASelectionLevel > 0 {
+                cmdASelectionLevel = 0
+                actionHandler?(.clearSelection)
+                return true
+            }
+            // Otherwise zoom to root
             actionHandler?(.zoomToRoot)
             return true
 
