@@ -19,6 +19,7 @@ struct NodeRow: View {
     @Binding var zoomedNodeId: UUID?
     @Binding var fontSize: Double
     @Binding var isFocusMode: Bool  // Whether focus mode is enabled
+    @Binding var isSearching: Bool  // Whether search bar is visible
 
     // Base sizes (at default font size 13.0)
     private let baseFontSize: CGFloat = 13.0
@@ -305,6 +306,8 @@ struct NodeRow: View {
                 zoomedNodeId = nil
                 document.collapseAll()
             }
+        case .toggleSearch:
+            isSearching.toggle()
         }
     }
     #endif
@@ -325,6 +328,7 @@ struct NodeRow: View {
     @Previewable @State var zoomedNodeId: UUID? = nil
     @Previewable @State var fontSize: Double = 13.0
     @Previewable @State var isFocusMode: Bool = false
+    @Previewable @State var isSearching: Bool = false
 
     ScrollView {
         VStack(spacing: 0) {
@@ -337,7 +341,8 @@ struct NodeRow: View {
                     windowId: UUID(),
                     zoomedNodeId: $zoomedNodeId,
                     fontSize: $fontSize,
-                    isFocusMode: $isFocusMode
+                    isFocusMode: $isFocusMode,
+                    isSearching: $isSearching
                 )
             }
         }

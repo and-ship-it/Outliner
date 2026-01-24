@@ -42,6 +42,7 @@ struct OutlineCommands: Commands {
     @FocusedValue(\.zoomedNodeId) var zoomedNodeIdBinding
     @FocusedValue(\.fontSize) var fontSizeBinding
     @FocusedValue(\.isFocusMode) var focusModeBinding
+    @FocusedValue(\.isSearching) var searchingBinding
 
     var body: some Commands {
         // File menu additions
@@ -92,6 +93,14 @@ struct OutlineCommands: Commands {
                 }
             }
             .keyboardShortcut(.tab, modifiers: .shift)
+            .disabled(document == nil)
+
+            Divider()
+
+            Button("Find...") {
+                searchingBinding?.wrappedValue = true
+            }
+            .keyboardShortcut("f", modifiers: .command)
             .disabled(document == nil)
         }
 
@@ -340,6 +349,19 @@ extension FocusedValues {
     var isFocusMode: Binding<Bool>? {
         get { self[FocusedFocusModeKey.self] }
         set { self[FocusedFocusModeKey.self] = newValue }
+    }
+}
+
+// MARK: - Focused Value for Search
+
+struct FocusedSearchKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
+extension FocusedValues {
+    var isSearching: Binding<Bool>? {
+        get { self[FocusedSearchKey.self] }
+        set { self[FocusedSearchKey.self] = newValue }
     }
 }
 

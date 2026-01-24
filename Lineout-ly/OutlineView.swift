@@ -14,8 +14,12 @@ struct OutlineView: View {
     let windowId: UUID
     @Binding var fontSize: Double
     @Binding var isFocusMode: Bool  // Whether focus mode is enabled (dims non-focused bullets)
+    @Binding var isSearching: Bool  // Whether search bar is visible
 
     @State private var hasSetInitialFocus = false
+    @State private var searchQuery: String = ""
+    @State private var searchResults: [OutlineNode] = []
+    @State private var selectedResultIndex: Int = 0
 
     // Scale factor based on font size (base is 13.0)
     private var scale: CGFloat { CGFloat(fontSize) / 13.0 }
@@ -40,6 +44,11 @@ struct OutlineView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Search bar (when searching)
+            if isSearching {
+                searchBar
+            }
+
             // Outline content - starts directly with bullets, no header
             ScrollViewReader { proxy in
                 ScrollView {
@@ -57,7 +66,8 @@ struct OutlineView: View {
                                 windowId: windowId,
                                 zoomedNodeId: $zoomedNodeId,
                                 fontSize: $fontSize,
-                                isFocusMode: $isFocusMode
+                                isFocusMode: $isFocusMode,
+                                isSearching: $isSearching
                             )
                             .id(item.node.id)
                         }
@@ -138,6 +148,98 @@ struct OutlineView: View {
     }
 
     // MARK: - Subviews
+
+    /// Search bar shown at the top when searching
+    private var searchBar: some View {
+        HStack(spacing: 8 * scale) {
+            // Search icon
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12 * scale))
+                .foregroundStyle(.secondary)
+
+            // Search text field
+            TextField("Search...", text: $searchQuery)
+                .textFieldStyle(.plain)
+                .font(.system(size: fontSize))
+                .onSubmit {
+                    // Navigate to next result on Enter
+                    if !searchResults.isEmpty {
+                        let index = selectedResultIndex % searchResults.count
+                        document.navigateToSearchResult(searchResults[index])
+                        selectedResultIndex += 1
+                    }
+                }
+                .onChange(of: searchQuery) { _, newValue in
+                    searchResults = document.search(query: newValue)
+                    selectedResultIndex = 0
+                    // Auto-navigate to first result
+                    if let first = searchResults.first {
+                        document.navigateToSearchResult(first)
+                    }
+                }
+
+            // Results count
+            if !searchQuery.isEmpty {
+                Text("\(searchResults.count) found")
+                    .font(.system(size: 11 * scale))
+                    .foregroundStyle(.secondary)
+            }
+
+            // Navigation buttons
+            if searchResults.count > 1 {
+                Button(action: navigateToPreviousResult) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 11 * scale))
+                }
+                .buttonStyle(.plain)
+
+                Button(action: navigateToNextResult) {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11 * scale))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            // Close button
+            Button(action: closeSearch) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11 * scale))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.escape, modifiers: [])
+        }
+        .padding(.horizontal, 16 * scale)
+        .padding(.vertical, 8 * scale)
+        .background(Color.textBackgroundColor)
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundStyle(Color.gray.opacity(0.2)),
+            alignment: .bottom
+        )
+    }
+
+    private func navigateToNextResult() {
+        guard !searchResults.isEmpty else { return }
+        selectedResultIndex = (selectedResultIndex + 1) % searchResults.count
+        document.navigateToSearchResult(searchResults[selectedResultIndex])
+    }
+
+    private func navigateToPreviousResult() {
+        guard !searchResults.isEmpty else { return }
+        selectedResultIndex = selectedResultIndex > 0 ? selectedResultIndex - 1 : searchResults.count - 1
+        document.navigateToSearchResult(searchResults[selectedResultIndex])
+    }
+
+    private func closeSearch() {
+        isSearching = false
+        searchQuery = ""
+        searchResults = []
+        selectedResultIndex = 0
+    }
 
     /// Breadcrumbs shown at the bottom when zoomed
     private var bottomBreadcrumbs: some View {
@@ -251,7 +353,8 @@ extension Color {
     @Previewable @State var zoomedNodeId: UUID? = nil
     @Previewable @State var fontSize: Double = 13.0
     @Previewable @State var isFocusMode: Bool = false
+    @Previewable @State var isSearching: Bool = false
 
-    OutlineView(document: document, zoomedNodeId: $zoomedNodeId, windowId: UUID(), fontSize: $fontSize, isFocusMode: $isFocusMode)
+    OutlineView(document: document, zoomedNodeId: $zoomedNodeId, windowId: UUID(), fontSize: $fontSize, isFocusMode: $isFocusMode, isSearching: $isSearching)
         .frame(width: 500, height: 700)
 }

@@ -24,6 +24,9 @@ struct ContentView: View {
     /// Focus mode - dims everything except the focused bullet
     @State private var isFocusMode: Bool = false
 
+    /// Search mode - shows search bar
+    @State private var isSearching: Bool = false
+
     /// Computed zoom ID
     private var zoomedNodeId: UUID? {
         get { UUID(uuidString: zoomedNodeIdString) }
@@ -109,11 +112,13 @@ struct ContentView: View {
             zoomedNodeId: zoomBinding,
             windowId: windowId,
             fontSize: $fontSize,
-            isFocusMode: $isFocusMode
+            isFocusMode: $isFocusMode,
+            isSearching: $isSearching
         )
         .focusedSceneValue(\.document, document)
         .focusedSceneValue(\.fontSize, $fontSize)
         .focusedSceneValue(\.isFocusMode, $isFocusMode)
+        .focusedSceneValue(\.isSearching, $isSearching)
     }
 }
 

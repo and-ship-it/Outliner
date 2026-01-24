@@ -91,6 +91,32 @@ final class OutlineDocument {
         displayRoot.flattenedVisible()
     }
 
+    // MARK: - Search
+
+    /// Search all nodes (including collapsed) for matching text
+    func search(query: String) -> [OutlineNode] {
+        guard !query.isEmpty else { return [] }
+        let lowercasedQuery = query.lowercased()
+        return root.flattened().filter { node in
+            node.title.lowercased().contains(lowercasedQuery) ||
+            node.body.lowercased().contains(lowercasedQuery)
+        }
+    }
+
+    /// Navigate to a search result - expands parents and focuses the node
+    func navigateToSearchResult(_ node: OutlineNode) {
+        // Expand all ancestors to make the node visible
+        var current = node.parent
+        while let parent = current {
+            if parent.isCollapsed {
+                parent.expand()
+            }
+            current = parent.parent
+        }
+        structureDidChange()
+        focusedNodeId = node.id
+    }
+
     // MARK: - Focus Operations
 
     func setFocus(_ node: OutlineNode?) {
