@@ -268,18 +268,24 @@ struct OutlineTextField: NSViewRepresentable {
 
         func controlTextDidChange(_ obj: Notification) {
             guard let textField = obj.object as? NSTextField else { return }
-            parent.text = textField.stringValue
+
+            // Get the actual text (excluding any ghost suggestion)
+            if let outlineTextField = textField as? OutlineNSTextField {
+                // Use actualText if suggestion is showing, otherwise use stringValue
+                let actualText = outlineTextField.getActualText()
+                parent.text = actualText
+
+                // Reset progressive selection state when text changes
+                outlineTextField.resetSelectionState()
+            } else {
+                parent.text = textField.stringValue
+            }
 
             // Invalidate intrinsic content size when text changes
             // This ensures the view recalculates height for wrapped text
             textField.invalidateIntrinsicContentSize()
             if let hostView = textField.superview as? WrappingTextFieldHost {
                 hostView.invalidateIntrinsicContentSize()
-            }
-
-            // Reset progressive selection state when text changes
-            if let outlineTextField = textField as? OutlineNSTextField {
-                outlineTextField.resetSelectionState()
             }
         }
 
@@ -473,6 +479,16 @@ class OutlineNSTextField: NSTextField {
     private var currentSelectionLevel: SelectionLevel = .none
     private var lastShiftDownTime: TimeInterval = 0
 
+    // Autocomplete state
+    private var currentSuggestion: String = ""
+    private(set) var isShowingSuggestion: Bool = false
+    private var actualText: String = ""  // The real text without suggestion
+
+    /// Get the actual text without any suggestion
+    func getActualText() -> String {
+        return isShowingSuggestion ? actualText : stringValue
+    }
+
     // MARK: - Dynamic Height for Wrapped Text
 
     override var intrinsicContentSize: NSSize {
@@ -641,7 +657,23 @@ class OutlineNSTextField: NSTextField {
                 return true
             }
 
+        case 124: // Right arrow
+            // Accept suggestion when at end of text and no modifiers
+            if !hasCommand && !hasOption && !hasShift {
+                if isShowingSuggestion {
+                    if let editor = currentEditor() as? NSTextView {
+                        let cursorPosition = editor.selectedRange().location
+                        if cursorPosition == actualText.count {
+                            _ = acceptSuggestion()
+                            return true
+                        }
+                    }
+                }
+            }
+
         case 48: // Tab
+            // Clear any suggestion when indenting/outdenting
+            clearSuggestion()
             if hasShift {
                 actionHandler?(.outdent)
             } else {
@@ -657,6 +689,11 @@ class OutlineNSTextField: NSTextField {
             }
 
         case 53: // Escape
+            // Clear suggestion first if showing, otherwise zoom to root
+            if isShowingSuggestion {
+                clearSuggestion()
+                return true
+            }
             actionHandler?(.zoomToRoot)
             return true
 
@@ -735,6 +772,200 @@ class OutlineNSTextField: NSTextField {
         super.keyDown(with: event)
     }
 
+    // MARK: - Autocomplete
+
+    /// Get the current word being typed (word before cursor)
+    private func getCurrentWord() -> (word: String, range: NSRange)? {
+        guard let editor = currentEditor() as? NSTextView else { return nil }
+        let text = editor.string
+        let cursorPosition = editor.selectedRange().location
+
+        guard cursorPosition > 0 && cursorPosition <= text.count else { return nil }
+
+        // Find word boundaries
+        let nsText = text as NSString
+        let wordRange = nsText.rangeOfCharacter(from: .whitespaces, options: .backwards, range: NSRange(location: 0, length: cursorPosition))
+
+        let wordStart = wordRange.location == NSNotFound ? 0 : wordRange.location + 1
+        let wordLength = cursorPosition - wordStart
+
+        guard wordLength >= 2 else { return nil }  // Only suggest for 2+ characters
+
+        let word = nsText.substring(with: NSRange(location: wordStart, length: wordLength))
+        return (word, NSRange(location: wordStart, length: wordLength))
+    }
+
+    /// Get completion suggestions for a partial word
+    private func getCompletions(for partialWord: String) -> [String] {
+        let checker = NSSpellChecker.shared
+        let language = checker.language()
+
+        // Get completions from spell checker
+        let completions = checker.completions(
+            forPartialWordRange: NSRange(location: 0, length: partialWord.count),
+            in: partialWord,
+            language: language,
+            inSpellDocumentWithTag: 0
+        ) ?? []
+
+        // Filter to only include completions that start with the partial word (case-insensitive)
+        return completions.filter { $0.lowercased().hasPrefix(partialWord.lowercased()) }
+    }
+
+    /// Update the inline suggestion based on current text
+    func updateSuggestion() {
+        guard let editor = currentEditor() as? NSTextView else {
+            clearSuggestion()
+            return
+        }
+
+        // Only show suggestion when cursor is at the end
+        let cursorPosition = editor.selectedRange().location
+        let textLength = editor.string.count
+
+        guard cursorPosition == textLength else {
+            clearSuggestion()
+            return
+        }
+
+        guard let (currentWord, _) = getCurrentWord() else {
+            clearSuggestion()
+            return
+        }
+
+        let completions = getCompletions(for: currentWord)
+
+        guard let firstCompletion = completions.first,
+              firstCompletion.lowercased() != currentWord.lowercased() else {
+            clearSuggestion()
+            return
+        }
+
+        // Get the remaining part of the suggestion
+        let suggestionSuffix = String(firstCompletion.dropFirst(currentWord.count))
+
+        guard !suggestionSuffix.isEmpty else {
+            clearSuggestion()
+            return
+        }
+
+        // Store the suggestion
+        currentSuggestion = suggestionSuffix
+        actualText = stringValue
+        isShowingSuggestion = true
+
+        // Show ghost text by appending attributed suggestion
+        showGhostText(suggestionSuffix)
+    }
+
+    /// Show the ghost text suggestion
+    private func showGhostText(_ suggestion: String) {
+        guard let editor = currentEditor() as? NSTextView else { return }
+
+        let currentText = actualText
+        let fullText = currentText + suggestion
+
+        let attributedString = NSMutableAttributedString(string: fullText)
+
+        // Style the actual text normally
+        let textAttributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .foregroundColor: NSColor.labelColor
+        ]
+        attributedString.setAttributes(textAttributes, range: NSRange(location: 0, length: currentText.count))
+
+        // Style the suggestion as ghost text
+        let ghostAttributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+            .foregroundColor: NSColor.placeholderTextColor
+        ]
+        attributedString.setAttributes(ghostAttributes, range: NSRange(location: currentText.count, length: suggestion.count))
+
+        // Update the text view
+        editor.textStorage?.setAttributedString(attributedString)
+
+        // Keep cursor at end of actual text (before suggestion)
+        editor.setSelectedRange(NSRange(location: currentText.count, length: 0))
+    }
+
+    /// Clear the current suggestion
+    func clearSuggestion() {
+        guard isShowingSuggestion else { return }
+
+        isShowingSuggestion = false
+        currentSuggestion = ""
+
+        // Restore actual text
+        if let editor = currentEditor() as? NSTextView {
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                .foregroundColor: NSColor.labelColor
+            ]
+            let attributedString = NSAttributedString(string: actualText, attributes: attributes)
+            editor.textStorage?.setAttributedString(attributedString)
+            editor.setSelectedRange(NSRange(location: actualText.count, length: 0))
+        }
+    }
+
+    /// Accept the current suggestion
+    func acceptSuggestion() -> Bool {
+        guard isShowingSuggestion && !currentSuggestion.isEmpty else { return false }
+
+        // Accept the suggestion
+        let newText = actualText + currentSuggestion
+
+        isShowingSuggestion = false
+        currentSuggestion = ""
+        actualText = newText
+
+        // Reset text with normal styling
+        if let editor = currentEditor() as? NSTextView {
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                .foregroundColor: NSColor.labelColor
+            ]
+            let attributedString = NSAttributedString(string: newText, attributes: attributes)
+            editor.textStorage?.setAttributedString(attributedString)
+            editor.setSelectedRange(NSRange(location: newText.count, length: 0))
+        }
+
+        // Update stringValue to sync with binding
+        stringValue = newText
+
+        return true
+    }
+
+    /// Called when text changes - override to update suggestions
+    override func textDidChange(_ notification: Notification) {
+        super.textDidChange(notification)
+
+        // Update actualText if we're not showing a suggestion
+        if !isShowingSuggestion {
+            actualText = stringValue
+        } else {
+            // User typed something, clear the suggestion and update actualText
+            // The stringValue now contains user input (may have overwritten suggestion)
+            let newText = stringValue
+
+            // If user typed into the suggestion area, extract actual typed text
+            if newText.count <= actualText.count + currentSuggestion.count {
+                // Check if they typed a character that matches suggestion start
+                if newText.count > actualText.count {
+                    actualText = newText
+                }
+            }
+
+            clearSuggestion()
+        }
+
+        // Debounce suggestion updates
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(delayedUpdateSuggestion), object: nil)
+        perform(#selector(delayedUpdateSuggestion), with: nil, afterDelay: 0.15)
+    }
+
+    @objc private func delayedUpdateSuggestion() {
+        updateSuggestion()
+    }
 }
 
 #else
