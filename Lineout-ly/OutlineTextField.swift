@@ -206,9 +206,18 @@ struct OutlineTextField: NSViewRepresentable {
                 currentOnAction?(action)
             }
 
+            // Update locked state
+            outlineTextField.isNodeLocked = self.isLocked
+
             // Handle mouse click focus - ensure document.focusedNodeId is updated
+            // But don't allow focus on locked nodes
             let currentOnFocusChange = self.onFocusChange
             outlineTextField.onMouseDownFocus = {
+                if outlineTextField.isNodeLocked {
+                    // Don't accept focus on locked nodes - resign immediately
+                    outlineTextField.window?.makeFirstResponder(nil)
+                    return
+                }
                 currentOnFocusChange(true)
             }
         }
@@ -549,6 +558,7 @@ struct OutlineTextField: NSViewRepresentable {
 class OutlineNSTextField: NSTextField {
     var actionHandler: ((OutlineAction) -> Void)?
     var onMouseDownFocus: (() -> Void)?  // Called when text field gains focus via mouse click
+    var isNodeLocked: Bool = false  // Whether this node is locked by another tab
 
     // Progressive selection state (Shift+Down)
     private enum SelectionLevel {
@@ -630,7 +640,19 @@ class OutlineNSTextField: NSTextField {
         }
     }
 
+    override var acceptsFirstResponder: Bool {
+        // Don't accept focus if this node is locked by another tab
+        if isNodeLocked {
+            return false
+        }
+        return super.acceptsFirstResponder
+    }
+
     override func mouseDown(with event: NSEvent) {
+        // Don't process mouse down if locked
+        if isNodeLocked {
+            return
+        }
         // Track that we're focusing via mouse click
         isBecomingFirstResponderViaClick = true
         super.mouseDown(with: event)
@@ -638,6 +660,10 @@ class OutlineNSTextField: NSTextField {
     }
 
     override func becomeFirstResponder() -> Bool {
+        // Double-check: don't become first responder if locked
+        if isNodeLocked {
+            return false
+        }
         let result = super.becomeFirstResponder()
         if result {
             // Notify about focus change if this came from a mouse click
