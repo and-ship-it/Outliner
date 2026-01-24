@@ -37,6 +37,22 @@ struct NodeRow: View {
     // Scale factor based on font size
     private var scale: CGFloat { CGFloat(fontSize) / baseFontSize }
 
+    // Vertical offset to center bullet/checkbox with first line of text
+    // Text line height ≈ fontSize * 1.2, center at fontSize * 0.6
+    // Bullet view is 22 * scale tall, center at 11 * scale
+    private var bulletVerticalOffset: CGFloat {
+        let textLineCenter = CGFloat(fontSize) * 0.6
+        let bulletViewCenter = 11 * scale
+        return textLineCenter - bulletViewCenter
+    }
+
+    // Checkbox vertical offset (checkbox is 14 * scale, center at 7 * scale)
+    private var checkboxVerticalOffset: CGFloat {
+        let textLineCenter = CGFloat(fontSize) * 0.6
+        let checkboxCenter = 7 * scale
+        return textLineCenter - checkboxCenter
+    }
+
     // Scaled sizes (content-level spacing)
     private var indentWidth: CGFloat { baseIndentWidth * scale }
     private var treeLineLeading: CGFloat { baseTreeLineLeading * scale }
@@ -99,7 +115,7 @@ struct NodeRow: View {
                         .offset(x: 4 * scale, y: -2 * scale)
                 }
             }
-            .padding(.top, 2 * scale)
+            .offset(y: bulletVerticalOffset)  // Center with first line of text
 
             // Task checkbox (shown when node is a task)
             if node.isTask {
@@ -112,7 +128,7 @@ struct NodeRow: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.leading, 4 * scale)
-                .padding(.top, 2 * scale)
+                .offset(y: checkboxVerticalOffset)  // Center with first line of text
             }
 
             // Content
