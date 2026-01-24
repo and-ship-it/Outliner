@@ -1036,19 +1036,60 @@ class OutlineNSTextField: NSTextField {
         if !isShowingSuggestion {
             actualText = stringValue
         } else {
-            // User typed something, clear the suggestion and update actualText
-            // The stringValue now contains user input (may have overwritten suggestion)
-            let newText = stringValue
+            // User typed something while suggestion was showing
+            // The stringValue now contains corrupted text (actual + typed char + suggestion remnants)
+            // We need to figure out what they actually typed
 
-            // If user typed into the suggestion area, extract actual typed text
-            if newText.count <= actualText.count + currentSuggestion.count {
-                // Check if they typed a character that matches suggestion start
+            let newText = stringValue
+            let expectedFullText = actualText + currentSuggestion
+
+            // If user typed a character, the new text is longer than actualText
+            // but the character was inserted at actualText.count position
+            if newText != expectedFullText {
+                // Text was modified - extract what was added
+                // The cursor was at actualText.count, so new char was inserted there
                 if newText.count > actualText.count {
+                    // Find the new character(s) that were typed
+                    // They should be at position actualText.count
+                    let insertionPoint = actualText.count
+
+                    // Get the new text without the suggestion (which may be corrupted)
+                    // The safest approach: take actualText + new chars typed
+                    // New chars = everything from insertionPoint that's NOT the old suggestion
+
+                    let afterInsertion = String(newText.dropFirst(insertionPoint))
+                    // Remove the old suggestion from the end if it's still there
+                    var newChars = afterInsertion
+                    if afterInsertion.hasSuffix(currentSuggestion) {
+                        newChars = String(afterInsertion.dropLast(currentSuggestion.count))
+                    } else if !currentSuggestion.isEmpty && afterInsertion.contains(currentSuggestion.first!) {
+                        // Suggestion might be partially there, just take 1 char
+                        newChars = String(afterInsertion.prefix(1))
+                    }
+
+                    actualText = actualText + newChars
+                }
+                // else: deletion or other edit, just use newText
+                else {
                     actualText = newText
                 }
             }
 
-            clearSuggestion()
+            // Clear suggestion and restore clean state
+            isShowingSuggestion = false
+            currentSuggestion = ""
+
+            // Reset the text field to just the actual text
+            if let editor = currentEditor() as? NSTextView {
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                    .foregroundColor: NSColor.labelColor
+                ]
+                let attributedString = NSAttributedString(string: actualText, attributes: attributes)
+                editor.textStorage?.setAttributedString(attributedString)
+                editor.setSelectedRange(NSRange(location: actualText.count, length: 0))
+            }
+            stringValue = actualText
         }
 
         // Debounce suggestion updates
