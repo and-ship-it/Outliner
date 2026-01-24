@@ -7,12 +7,12 @@
 
 import Foundation
 import SwiftUI
-import UniformTypeIdentifiers
 import Combine
 
 /// The main document model managing the outline tree state
 @Observable
-final class OutlineDocument: ObservableObject {
+@MainActor
+final class OutlineDocument {
     /// The invisible root node - its children are the top-level items
     var root: OutlineNode
 
@@ -24,6 +24,9 @@ final class OutlineDocument: ObservableObject {
 
     /// Version counter - increments on any structural change to trigger re-renders
     var structureVersion: Int = 0
+
+    /// Whether auto-save is enabled (set to false during loading)
+    var autoSaveEnabled: Bool = true
 
     // MARK: - Initialization
 
@@ -40,6 +43,18 @@ final class OutlineDocument: ObservableObject {
     /// Call this after any structural change (collapse, expand, move, add, delete)
     private func structureDidChange() {
         structureVersion += 1
+        scheduleAutoSave()
+    }
+
+    /// Call this after content changes (title, body edits)
+    func contentDidChange() {
+        scheduleAutoSave()
+    }
+
+    /// Schedule an auto-save via iCloudManager
+    private func scheduleAutoSave() {
+        guard autoSaveEnabled else { return }
+        iCloudManager.shared.scheduleAutoSave(for: self)
     }
 
     // MARK: - Computed Properties
@@ -407,38 +422,12 @@ final class OutlineDocument: ObservableObject {
     }
 }
 
-// MARK: - ReferenceFileDocument Conformance
-
-extension OutlineDocument: ReferenceFileDocument {
-    static var readableContentTypes: [UTType] { [.plainText, UTType(filenameExtension: "md")!] }
-
-    convenience init(configuration: ReadConfiguration) throws {
-        guard let data = configuration.file.regularFileContents,
-              let markdown = String(data: data, encoding: .utf8) else {
-            throw CocoaError(.fileReadCorruptFile)
-        }
-
-        let root = MarkdownCodec.parse(markdown)
-        self.init(root: root)
-    }
-
-    func snapshot(contentType: UTType) throws -> String {
-        MarkdownCodec.serialize(root)
-    }
-
-    func fileWrapper(snapshot: String, configuration: WriteConfiguration) throws -> FileWrapper {
-        guard let data = snapshot.data(using: .utf8) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        return FileWrapper(regularFileWithContents: data)
-    }
-}
-
 // MARK: - Document Creation
 
 extension OutlineDocument {
     /// Creates an empty document with one blank bullet (for new documents)
-    nonisolated static func createEmpty() -> OutlineDocument {
+    @MainActor
+    static func createEmpty() -> OutlineDocument {
         let root = OutlineNode(title: "__root__")
         // Start with one empty bullet - init will handle this, but be explicit
         let emptyNode = OutlineNode(title: "")
@@ -453,7 +442,8 @@ extension OutlineDocument {
         OutlineDocument(root: MarkdownCodec.sampleOutline())
     }
 
-    nonisolated static func createSample() -> OutlineDocument {
+    @MainActor
+    static func createSample() -> OutlineDocument {
         let root = OutlineNode(title: "__root__")
         // Create basic sample structure
         let inbox = OutlineNode(title: "Inbox", body: "Quick capture area")

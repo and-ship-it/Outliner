@@ -6,18 +6,28 @@
 //
 
 import SwiftUI
-import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 @main
 struct Lineout_lyApp: App {
     var body: some Scene {
-        // Document-based app for .md files
-        DocumentGroup(newDocument: OutlineDocument.createEmpty) { configuration in
-            OutlineView(document: configuration.document)
+        // Single-document app with iCloud sync
+        WindowGroup("", id: "main") {
+            ContentView()
         }
         .commands {
+            // Remove New Document command
+            CommandGroup(replacing: .newItem) {
+                // Empty - no new document creation
+            }
+
             OutlineCommands()
         }
+        #if os(macOS)
+        .defaultSize(width: 800, height: 600)
+        #endif
     }
 }
 
@@ -27,6 +37,16 @@ struct OutlineCommands: Commands {
     @FocusedValue(\.document) var document
 
     var body: some Commands {
+        // File menu additions
+        CommandGroup(after: .saveItem) {
+            Divider()
+
+            Button("Show in Finder") {
+                showInFinder()
+            }
+            .keyboardShortcut("R", modifiers: [.command, .shift])
+        }
+
         // Edit menu additions
         CommandGroup(after: .undoRedo) {
             Divider()
@@ -137,5 +157,19 @@ struct OutlineCommands: Commands {
             .keyboardShortcut(.downArrow, modifiers: [.command, .option])
             .disabled(document == nil)
         }
+    }
+
+    // MARK: - Show in Finder
+
+    private func showInFinder() {
+        #if os(macOS)
+        // Show the iCloud folder in Finder
+        if let appFolder = iCloudManager.shared.appFolderURL {
+            NSWorkspace.shared.activateFileViewerSelecting([appFolder])
+        } else if iCloudManager.shared.localFallbackURL.path.isEmpty == false {
+            // Show local fallback folder
+            NSWorkspace.shared.activateFileViewerSelecting([iCloudManager.shared.localFallbackURL])
+        }
+        #endif
     }
 }

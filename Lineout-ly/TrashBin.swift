@@ -28,25 +28,41 @@ struct TrashedItem: Identifiable, Codable {
 
 /// Manages the trash bin - stores deleted items and persists to markdown
 @Observable
+@MainActor
 final class TrashBin {
     static let shared = TrashBin()
 
     private(set) var items: [TrashedItem] = []
 
-    private let trashFileURL: URL
     private let dateFormatter: DateFormatter
+    private let trashFileName = "trash.md"
+
+    /// Get the trash file URL - prefers iCloud, falls back to local
+    private var trashFileURL: URL {
+        // Try iCloud first
+        if let trashFolder = iCloudManager.shared.trashFolderURL {
+            return trashFolder.appendingPathComponent(trashFileName)
+        }
+        // Fall back to local
+        return localTrashFileURL
+    }
+
+    /// Local fallback URL
+    private var localTrashFileURL: URL {
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return documentsPath.appendingPathComponent("Lineout-ly").appendingPathComponent(trashFileName)
+    }
 
     private init() {
-        // Get the app's document directory
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        trashFileURL = documentsPath.appendingPathComponent("Lineout-Trash.md")
-
         // Set up date formatter
         dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
 
-        // Load existing trash
-        loadFromFile()
+        // Load existing trash after a brief delay to allow iCloud to initialize
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            await loadFromFile()
+        }
     }
 
     // MARK: - Public Methods
@@ -55,40 +71,75 @@ final class TrashBin {
     func trash(_ node: OutlineNode) {
         let trashedItem = TrashedItem(from: node)
         items.insert(trashedItem, at: 0) // Most recent first
-        saveToFile()
+        Task {
+            await saveToFile()
+        }
     }
 
     /// Clear all items from trash (permanent delete)
     func emptyTrash() {
         items.removeAll()
-        saveToFile()
+        Task {
+            await saveToFile()
+        }
     }
 
     /// Remove a specific item from trash
     func remove(_ item: TrashedItem) {
         items.removeAll { $0.id == item.id }
-        saveToFile()
+        Task {
+            await saveToFile()
+        }
     }
 
     // MARK: - Persistence
 
-    private func saveToFile() {
+    private func saveToFile() async {
         let markdown = generateMarkdown()
-        do {
-            try markdown.write(to: trashFileURL, atomically: true, encoding: .utf8)
-        } catch {
-            print("Failed to save trash: \(error)")
+        let fileURL = trashFileURL
+
+        // Ensure parent directory exists
+        let parentDir = fileURL.deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: parentDir.path) {
+            try? FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+        }
+
+        // Use file coordination for iCloud safety
+        let coordinator = NSFileCoordinator()
+        var coordinatorError: NSError?
+
+        coordinator.coordinate(writingItemAt: fileURL, options: .forReplacing, error: &coordinatorError) { url in
+            do {
+                try markdown.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                print("Failed to save trash: \(error)")
+            }
+        }
+
+        if let error = coordinatorError {
+            print("Coordination error saving trash: \(error)")
         }
     }
 
-    private func loadFromFile() {
-        guard FileManager.default.fileExists(atPath: trashFileURL.path) else { return }
+    private func loadFromFile() async {
+        let fileURL = trashFileURL
 
-        do {
-            let markdown = try String(contentsOf: trashFileURL, encoding: .utf8)
-            items = parseMarkdown(markdown)
-        } catch {
-            print("Failed to load trash: \(error)")
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+
+        let coordinator = NSFileCoordinator()
+        var coordinatorError: NSError?
+
+        coordinator.coordinate(readingItemAt: fileURL, options: [], error: &coordinatorError) { url in
+            do {
+                let markdown = try String(contentsOf: url, encoding: .utf8)
+                self.items = self.parseMarkdown(markdown)
+            } catch {
+                print("Failed to load trash: \(error)")
+            }
+        }
+
+        if let error = coordinatorError {
+            print("Coordination error loading trash: \(error)")
         }
     }
 

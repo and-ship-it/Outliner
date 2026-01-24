@@ -38,7 +38,7 @@ struct OutlineView: View {
                                 node: item.node,
                                 effectiveDepth: item.depth,
                                 treeLines: item.treeLines,
-                                isLastNode: index == nodes.count - 1,
+                                hasNextNode: index < nodes.count - 1,
                                 isOnlyNode: isOnlyOne
                             )
                             .id(item.node.id)

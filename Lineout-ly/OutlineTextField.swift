@@ -60,7 +60,7 @@ class WrappingTextFieldHost: NSView {
 struct OutlineTextField: NSViewRepresentable {
     @Binding var text: String
     var isFocused: Bool
-    var isLastNode: Bool = false  // Whether this is the last visible node in the document
+    var hasNextNode: Bool = true  // Whether there's a next node to navigate to
     var placeholder: String? = nil  // Placeholder text shown when empty
     var onFocusChange: (Bool) -> Void
     var onAction: ((OutlineAction) -> Void)?
@@ -125,6 +125,19 @@ struct OutlineTextField: NSViewRepresentable {
             // Font change affects size, so invalidate
             textField.invalidateIntrinsicContentSize()
             nsView.invalidateIntrinsicContentSize()
+        }
+
+        // Update placeholder - clear it if no longer applicable
+        if let placeholder = placeholder {
+            textField.placeholderAttributedString = NSAttributedString(
+                string: placeholder,
+                attributes: [
+                    .foregroundColor: NSColor.placeholderTextColor,
+                    .font: weightedFont
+                ]
+            )
+        } else {
+            textField.placeholderAttributedString = nil
         }
 
         // Update action handler
@@ -242,8 +255,8 @@ struct OutlineTextField: NSViewRepresentable {
         func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             switch commandSelector {
             case #selector(NSResponder.moveUp(_:)):
-                // Only navigate to previous bullet if cursor is on first visual line
-                if isAtFirstVisualLine(textView) {
+                // Navigate to previous bullet if empty OR at first visual line
+                if textView.string.isEmpty || isAtFirstVisualLine(textView) {
                     parent.onAction?(.navigateUp)
                     return true
                 }
@@ -256,23 +269,9 @@ struct OutlineTextField: NSViewRepresentable {
                     // Let performKeyEquivalent handle it
                     return false
                 }
-                // Only navigate to next bullet if cursor is on last visual line
-                if isAtLastVisualLine(textView) {
-                    // If this is the last node in the document, move cursor to end instead
-                    if parent.isLastNode {
-                        let cursorLocation = textView.selectedRange().location
-                        let textLength = textView.string.count
 
-                        // If cursor is not at end of text, move to end
-                        if cursorLocation < textLength {
-                            textView.setSelectedRange(NSRange(location: textLength, length: 0))
-                            return true
-                        }
-                        // Already at end, nothing to do
-                        return true
-                    }
-
-                    // Not the last node, navigate to next bullet
+                // Navigate to next bullet if empty OR at last visual line
+                if textView.string.isEmpty || isAtLastVisualLine(textView) {
                     parent.onAction?(.navigateDown)
                     return true
                 }
@@ -528,7 +527,6 @@ class OutlineNSTextField: NSTextField {
         var wordRange = NSRange(location: 0, length: 0)
 
         if !text.isEmpty {
-            let nsText = text as NSString
             // Skip leading whitespace
             var start = 0
             while start < text.count && text[text.index(text.startIndex, offsetBy: start)].isWhitespace {
@@ -638,6 +636,30 @@ class OutlineNSTextField: NSTextField {
         }
 
         return super.performKeyEquivalent(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // Handle plain arrow keys on empty text fields
+        // (doCommandBy may not be called for empty fields)
+        if stringValue.isEmpty {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let noModifiers = flags.isEmpty || flags == .numericPad
+
+            if noModifiers {
+                switch event.keyCode {
+                case 126: // Up arrow
+                    actionHandler?(.navigateUp)
+                    return
+                case 125: // Down arrow
+                    actionHandler?(.navigateDown)
+                    return
+                default:
+                    break
+                }
+            }
+        }
+
+        super.keyDown(with: event)
     }
 
 }
