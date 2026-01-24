@@ -43,6 +43,7 @@ struct OutlineCommands: Commands {
     @FocusedValue(\.fontSize) var fontSizeBinding
     @FocusedValue(\.isFocusMode) var focusModeBinding
     @FocusedValue(\.isSearching) var searchingBinding
+    @AppStorage("autocompleteEnabled") var autocompleteEnabled: Bool = true
 
     var body: some Commands {
         // File menu additions
@@ -102,6 +103,10 @@ struct OutlineCommands: Commands {
             }
             .keyboardShortcut("f", modifiers: .command)
             .disabled(document == nil)
+
+            Divider()
+
+            Toggle("Word Autocomplete", isOn: $autocompleteEnabled)
         }
 
         // View menu additions

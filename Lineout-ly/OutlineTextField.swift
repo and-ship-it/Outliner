@@ -905,8 +905,23 @@ class OutlineNSTextField: NSTextField {
         return completions.filter { $0.lowercased().hasPrefix(partialWord.lowercased()) }
     }
 
+    /// Check if autocomplete is enabled (defaults to true)
+    private var isAutocompleteEnabled: Bool {
+        // If key doesn't exist, default to true
+        if UserDefaults.standard.object(forKey: "autocompleteEnabled") == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: "autocompleteEnabled")
+    }
+
     /// Update the inline suggestion based on current text
     func updateSuggestion() {
+        // Check if autocomplete is enabled in settings
+        guard isAutocompleteEnabled else {
+            clearSuggestion()
+            return
+        }
+
         guard let editor = currentEditor() as? NSTextView else {
             clearSuggestion()
             return
