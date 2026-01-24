@@ -183,6 +183,181 @@ Saved to `session.json` on app quit, restored on launch:
 
 ---
 
+## Navigation Patterns
+
+### Cursor Navigation (Within a Bullet)
+```
+Single-line bullet:
+┌─────────────────────────────────┐
+│ • This is a single line         │
+└─────────────────────────────────┘
+  ↑                             ↑
+  Cmd+↑ (start)         Cmd+↓ (end)
+
+Multi-line wrapped bullet:
+┌─────────────────────────────────┐
+│ • This is a longer bullet that  │  ← Line 1: ↑ navigates to prev bullet
+│   wraps to multiple visual      │  ← Line 2: ↑/↓ move within text
+│   lines in the editor           │  ← Line 3: ↓ navigates to next bullet
+└─────────────────────────────────┘
+```
+
+- **←/→** - Move cursor left/right within text
+- **↑/↓** - Move cursor up/down within wrapped text
+- **Cmd+←** - Jump to start of line
+- **Cmd+→** - Jump to end of line
+- **Cmd+↑** - Jump to start of bullet text
+- **Cmd+↓** - Jump to end of bullet text
+- **Option+←/→** - Jump by word
+
+### Bullet Navigation (Between Bullets)
+```
+┌─────────────────────────────────┐
+│ • Bullet A                      │  ← ↑ from B goes here
+├─────────────────────────────────┤
+│ • Bullet B (focused)            │  ← Current focus
+├─────────────────────────────────┤
+│ • Bullet C                      │  ← ↓ from B goes here
+└─────────────────────────────────┘
+```
+
+- **↑** at first visual line → Navigate to previous visible bullet
+- **↓** at last visual line → Navigate to next visible bullet
+- **↑/↓** on empty bullet → Always navigate to adjacent bullet
+
+### Hierarchy Navigation
+```
+• Parent
+  • Child 1        ← Tab from here indents under "Parent"
+  • Child 2
+    • Grandchild   ← Shift+Tab outdents to "Child" level
+  • Child 3
+```
+
+- **Tab** - Indent: Make current bullet a child of the bullet above
+- **Shift+Tab** - Outdent: Move current bullet up one level in hierarchy
+- **Shift+Option+→** - Alternative indent
+- **Shift+Option+←** - Alternative outdent
+
+### Reordering (Moving Bullets)
+```
+Before:                    After Shift+Option+↑:
+• Bullet A                 • Bullet B (moved up)
+• Bullet B (focused)  →    • Bullet A
+• Bullet C                 • Bullet C
+```
+
+- **Shift+Option+↑** - Move bullet up (swap with previous sibling)
+- **Shift+Option+↓** - Move bullet down (swap with next sibling)
+- Maintains hierarchy (children move with parent)
+- Cannot move past parent boundaries
+
+### Collapse/Expand Navigation
+```
+Expanded:                  Collapsed:
+• Parent                   • Parent ▸ (chevron right)
+  • Child 1                  (children hidden)
+  • Child 2
+  • Child 3
+```
+
+- **Cmd+Shift+↑** - Collapse focused bullet (hide children)
+- **Cmd+Shift+↓** - Expand focused bullet (show children)
+- **Click chevron** - Toggle collapse state
+- Collapsed bullets show **▸**, expanded show **▾**
+
+### Zoom Navigation
+```
+Home view:                 Zoomed into "Project A":
+• Project A                • Project A (header)
+  • Task 1                   • Task 1
+  • Task 2         →         • Task 2
+• Project B                  • Task 3
+• Project C
+                           Breadcrumb: 🏠 > Project A
+```
+
+- **Cmd+.** - Zoom into focused bullet (show only its subtree)
+- **Cmd+,** - Zoom out one level (to parent)
+- **Escape** - Zoom to root (go home)
+- **Cmd+Shift+H** - Go home AND collapse all bullets
+- **Breadcrumb clicks** - Jump to any ancestor level
+
+### Tab Navigation
+```
+┌─────┬─────────┬─────────┐
+│ Tab1│  Tab2   │  Tab3   │  ← Cmd+1/2/3 to switch
+│Home │Project A│Project B│  ← Each has own zoom/collapse
+└─────┴─────────┴─────────┘
+```
+
+- **Cmd+T** - New tab zoomed to current bullet
+- **Cmd+1-9** - Switch to tab by number
+- **Cmd+W** - Close current tab
+- Each tab has independent zoom and collapse state
+
+### Search Navigation
+```
+┌─────────────────────────────────┐
+│ 🔍 search query    3 found  ▲▼  │  ← Cmd+F opens
+├─────────────────────────────────┤
+│ • Result 1 with [highlight]     │
+│ • Result 2 with [highlight]     │
+│ • Result 3 with [highlight]     │
+└─────────────────────────────────┘
+```
+
+- **Cmd+F** - Open search bar
+- **Enter** - Jump to next result
+- **▲/▼ buttons** - Navigate between results
+- **Escape** - Close search
+- Matches highlighted in yellow
+
+### Selection Navigation
+```
+Progressive Cmd+A selection:
+
+Press 1: Select text        Press 2: Select bullet
+┌─────────────────────┐     ┌─────────────────────┐
+│ • [Selected text]   │     │ ▓ Selected bullet ▓ │
+│ • Other bullet      │     │ • Other bullet      │
+└─────────────────────┘     └─────────────────────┘
+
+Press 3: Select siblings    Press 4: Expand to parent
+┌─────────────────────┐     ┌─────────────────────┐
+│ ▓ Selected bullet ▓ │     │ ▓ Parent selected ▓ │
+│ ▓ Sibling selected▓ │     │ ▓  Child selected ▓ │
+│ ▓ Sibling selected▓ │     │ ▓  Child selected ▓ │
+└─────────────────────┘     └─────────────────────┘
+```
+
+- **Cmd+A** - Progressive selection (text → bullet → siblings → parent)
+- **Shift+↓** - Progressive select (word → line → next bullet)
+- **Escape** - Clear selection
+- **Any key** - Cancels selection (except Cmd+Shift+Backspace)
+
+### Navigation Flow Summary
+```
+                    Cmd+. (zoom in)
+                         ↓
+    ←── Cmd+, (zoom out) ●  Escape (home)
+                         ↑
+
+    ↑ (prev bullet)      ●      ↓ (next bullet)
+                    (current)
+
+    Shift+Opt+↑          ●      Shift+Opt+↓
+    (move up)       (focused)   (move down)
+
+    Shift+Tab            ●      Tab
+    (outdent)       (hierarchy) (indent)
+
+    Cmd+Shift+↑          ●      Cmd+Shift+↓
+    (collapse)      (visibility)(expand)
+```
+
+---
+
 ## File Locations
 
 | File | Location |
