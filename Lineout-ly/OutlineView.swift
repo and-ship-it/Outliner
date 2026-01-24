@@ -85,6 +85,16 @@ struct OutlineView: View {
                         }
                     }
                 }
+                .onAppear {
+                    // Scroll to existing focused node (e.g., from session restore)
+                    if let id = document.focusedNodeId {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            withAnimation {
+                                proxy.scrollTo(id, anchor: .center)
+                            }
+                        }
+                    }
+                }
             }
 
             // Breadcrumbs at bottom (when zoomed)
@@ -105,8 +115,14 @@ struct OutlineView: View {
         }
     }
 
-    /// Focus on the first visible node
+    /// Focus on the first visible node (or keep existing focus if already set)
     private func setFocusToFirstNode() {
+        // If focus is already set (e.g., from session restore), don't override it
+        if document.focusedNodeId != nil {
+            hasSetInitialFocus = true
+            return
+        }
+
         let nodes = nodesWithDepth
         if let firstNode = nodes.first {
             // Use a small delay to ensure the view hierarchy is fully established

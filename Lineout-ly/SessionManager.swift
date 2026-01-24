@@ -68,7 +68,10 @@ final class SessionManager {
         do {
             let data = try JSONEncoder().encode(state)
             UserDefaults.standard.set(data, forKey: sessionKey)
-            print("[Session] Saved session with \(tabs.count) tab(s)")
+            print("[Session] Saved session with \(tabs.count) tab(s), focused: \(state.focusedNodeId ?? "nil")")
+            for (i, tab) in tabs.enumerated() {
+                print("[Session]   Tab \(i): zoom=\(tab.zoomedNodeId ?? "nil")")
+            }
         } catch {
             print("[Session] Failed to save session: \(error)")
         }
@@ -153,16 +156,20 @@ final class SessionManager {
         pendingSessionRestore = state
 
         #if os(macOS)
+        // Populate the zoom queue for all tabs (first tab included)
+        WindowManager.shared.pendingZoomQueue = state.tabs.map { tabState in
+            if let zoomIdString = tabState.zoomedNodeId {
+                return UUID(uuidString: zoomIdString)
+            }
+            return nil
+        }
+
         // Restore additional tabs if needed
         if state.tabs.count > 1 {
-            // Open additional tabs after a short delay to let the first window load
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                for i in 1..<state.tabs.count {
-                    let tabState = state.tabs[i]
-                    if let zoomIdString = tabState.zoomedNodeId,
-                       let zoomId = UUID(uuidString: zoomIdString) {
-                        WindowManager.shared.pendingZoom = zoomId
-                    }
+            // Open additional tabs with staggered delays to ensure proper queue consumption
+            for i in 1..<state.tabs.count {
+                let delay = 0.5 + Double(i - 1) * 0.3  // 0.5s for first, then +0.3s each
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                     NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
                 }
             }

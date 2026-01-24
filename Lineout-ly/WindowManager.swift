@@ -30,10 +30,19 @@ final class WindowManager {
     /// Pending zoom for next window (set before opening new tab)
     var pendingZoom: UUID?
 
+    /// Queue of pending zooms for session restore (each new tab pops one)
+    var pendingZoomQueue: [UUID?] = []
+
     /// Track active tabs and their zoom states
     private var tabZoomStates: [UUID: UUID?] = [:]  // windowId -> zoomedNodeId
 
     private init() {}
+
+    /// Pop the next pending zoom from the queue (for session restore)
+    func popPendingZoom() -> UUID? {
+        guard !pendingZoomQueue.isEmpty else { return nil }
+        return pendingZoomQueue.removeFirst()
+    }
 
     // MARK: - Tab Tracking
 

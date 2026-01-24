@@ -56,8 +56,17 @@ struct ContentView: View {
         .task {
             await WindowManager.shared.loadDocumentIfNeeded()
 
-            // Check for pending zoom (from Cmd+T)
-            if let pending = WindowManager.shared.pendingZoom {
+            // Check for pending zoom from session restore queue first
+            if !WindowManager.shared.pendingZoomQueue.isEmpty {
+                let zoomId = WindowManager.shared.popPendingZoom()
+                print("[Session] Tab \(windowId) popped zoom: \(zoomId?.uuidString ?? "nil")")
+                if let zoomId {
+                    setZoomedNodeId(zoomId)
+                }
+            }
+            // Then check for pending zoom from Cmd+T
+            else if let pending = WindowManager.shared.pendingZoom {
+                print("[Session] Tab \(windowId) using pendingZoom: \(pending)")
                 setZoomedNodeId(pending)
                 WindowManager.shared.pendingZoom = nil
             }
