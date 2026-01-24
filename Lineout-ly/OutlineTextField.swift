@@ -28,6 +28,7 @@ enum OutlineAction {
     case zoomToRoot
     case progressiveSelectDown
     case deleteWithChildren
+    case toggleTask
 }
 
 /// Host view that manages the text field and handles dynamic sizing
@@ -60,6 +61,8 @@ class WrappingTextFieldHost: NSView {
 struct OutlineTextField: NSViewRepresentable {
     @Binding var text: String
     var isFocused: Bool
+    var isLocked: Bool = false  // Whether this node is locked by another tab
+    var isTaskCompleted: Bool = false  // Whether this is a completed task (strikethrough + grey)
     var hasNextNode: Bool = true  // Whether there's a next node to navigate to
     var placeholder: String? = nil  // Placeholder text shown when empty
     var onFocusChange: (Bool) -> Void
@@ -73,9 +76,8 @@ struct OutlineTextField: NSViewRepresentable {
 
         let textField = OutlineNSTextField()
         textField.delegate = context.coordinator
-        textField.actionHandler = { [context] action in
-            context.coordinator.parent.onAction?(action)
-        }
+        // Action handler will be set in updateNSView
+        textField.actionHandler = nil
         textField.isBordered = false
         textField.drawsBackground = false
         textField.focusRingType = .none
@@ -113,6 +115,9 @@ struct OutlineTextField: NSViewRepresentable {
     func updateNSView(_ nsView: WrappingTextFieldHost, context: Context) {
         guard let textField = nsView.textField else { return }
 
+        // Keep coordinator's parent reference up to date
+        context.coordinator.parent = self
+
         // Update text if changed externally
         if textField.stringValue != text {
             textField.stringValue = text
@@ -140,10 +145,44 @@ struct OutlineTextField: NSViewRepresentable {
             textField.placeholderAttributedString = nil
         }
 
-        // Update action handler
+        // Update action handler - capture the current onAction directly
         if let outlineTextField = textField as? OutlineNSTextField {
+            let currentOnAction = self.onAction
             outlineTextField.actionHandler = { action in
-                context.coordinator.parent.onAction?(action)
+                currentOnAction?(action)
+            }
+        }
+
+        // Update editable state based on lock
+        textField.isEditable = !isLocked
+        textField.isSelectable = !isLocked
+
+        // Update text color and strikethrough for completed tasks
+        if isTaskCompleted {
+            textField.textColor = NSColor.secondaryLabelColor
+            // Apply strikethrough using attributed string
+            let attributes: [NSAttributedString.Key: Any] = [
+                .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                .strikethroughColor: NSColor.secondaryLabelColor,
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .font: weightedFont
+            ]
+            textField.attributedStringValue = NSAttributedString(string: text, attributes: attributes)
+        } else {
+            textField.textColor = NSColor.labelColor
+            // Remove strikethrough by setting plain string
+            if textField.attributedStringValue.string == text {
+                // Check if it has strikethrough and remove it
+                let range = NSRange(location: 0, length: textField.attributedStringValue.length)
+                if range.length > 0 {
+                    var hasStrikethrough = false
+                    textField.attributedStringValue.enumerateAttribute(.strikethroughStyle, in: range) { value, _, _ in
+                        if value != nil { hasStrikethrough = true }
+                    }
+                    if hasStrikethrough {
+                        textField.stringValue = text
+                    }
+                }
             }
         }
 
@@ -558,6 +597,12 @@ class OutlineNSTextField: NSTextField {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Only handle key equivalents if THIS text field is being edited (has focus)
+        // Otherwise, the event should propagate to other text fields
+        guard currentEditor() != nil else {
+            return super.performKeyEquivalent(with: event)
+        }
+
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let hasCommand = flags.contains(.command)
         let hasOption = flags.contains(.option)
@@ -628,6 +673,13 @@ class OutlineNSTextField: NSTextField {
             if hasCommand && hasShift {
                 // Cmd+Shift+Delete: delete bullet and all children
                 actionHandler?(.deleteWithChildren)
+                return true
+            }
+
+        case 37: // L
+            if hasCommand && hasShift {
+                // Cmd+Shift+L: toggle task mode
+                actionHandler?(.toggleTask)
                 return true
             }
 

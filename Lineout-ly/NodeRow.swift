@@ -15,6 +15,9 @@ struct NodeRow: View {
     let treeLines: [Bool]  // Which depth levels should show a vertical line
     var hasNextNode: Bool = true  // Whether there's a next node below this one
     var isOnlyNode: Bool = false  // Whether this is the only node (for placeholder)
+    let windowId: UUID
+    @Binding var zoomedNodeId: UUID?
+    @Binding var fontSize: Double
 
     private let indentWidth: CGFloat = 20
     private let lineColor = Color.gray.opacity(0.3)
@@ -23,6 +26,11 @@ struct NodeRow: View {
 
     var isNodeFocused: Bool {
         document.focusedNodeId == node.id
+    }
+
+    /// Check if this node is locked by another window
+    var isLockedByOtherWindow: Bool {
+        WindowManager.shared.isNodeLocked(node.id, for: windowId)
     }
 
     var body: some View {
@@ -51,13 +59,37 @@ struct NodeRow: View {
                 }
             }
 
-            // Bullet
-            BulletView(node: node, isFocused: isNodeFocused) {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    document.toggleNode(node)
+            // Bullet with lock indicator
+            ZStack(alignment: .topTrailing) {
+                BulletView(node: node, isFocused: isNodeFocused) {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        document.toggleNode(node)
+                    }
+                }
+
+                // Lock indicator when locked by another window
+                if isLockedByOtherWindow {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.gray)
+                        .offset(x: 4, y: -2)
                 }
             }
             .padding(.top, 2)
+
+            // Task checkbox (shown when node is a task)
+            if node.isTask {
+                Button(action: {
+                    node.toggleTaskCompleted()
+                }) {
+                    Image(systemName: node.isTaskCompleted ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 14))
+                        .foregroundStyle(node.isTaskCompleted ? .secondary : .primary)
+                }
+                .buttonStyle(.plain)
+                .padding(.leading, 4)
+                .padding(.top, 2)
+            }
 
             // Content
             VStack(alignment: .leading, spacing: 2) {
@@ -69,12 +101,32 @@ struct NodeRow: View {
                 }
             }
             .padding(.leading, 6)
+            .opacity(isLockedByOtherWindow ? 0.5 : 1.0) // Dim locked nodes
 
             Spacer(minLength: 12)
         }
         .padding(.vertical, 1)
         .contentShape(Rectangle())
         .onTapGesture {
+            tryFocusNode()
+        }
+    }
+
+    /// Try to focus this node, acquiring lock if needed
+    private func tryFocusNode() {
+        // If locked by another window, don't allow focus
+        if isLockedByOtherWindow {
+            return
+        }
+
+        let oldFocusId = document.focusedNodeId
+
+        // Try to acquire lock
+        if WindowManager.shared.tryLock(nodeId: node.id, for: windowId) {
+            // Release old lock
+            if let oldId = oldFocusId, oldId != node.id {
+                WindowManager.shared.releaseLock(nodeId: oldId, for: windowId)
+            }
             document.setFocus(node)
         }
     }
@@ -87,32 +139,44 @@ struct NodeRow: View {
         OutlineTextField(
             text: Binding(
                 get: { node.title },
-                set: { node.title = $0 }
+                set: { newValue in
+                    // Only allow editing if not locked
+                    if !isLockedByOtherWindow {
+                        node.title = newValue
+                    }
+                }
             ),
-            isFocused: isNodeFocused,
+            isFocused: isNodeFocused && !isLockedByOtherWindow,
+            isLocked: isLockedByOtherWindow,
+            isTaskCompleted: node.isTask && node.isTaskCompleted,
             hasNextNode: hasNextNode,
             placeholder: isOnlyNode && node.title.isEmpty ? placeholderText : nil,
             onFocusChange: { focused in
                 if focused && !isNodeFocused {
-                    document.setFocus(node)
+                    tryFocusNode()
                 }
             },
             onAction: handleAction,
             onSplitLine: { textAfter in
                 document.createSiblingBelow(withTitle: textAfter)
             },
+            font: .systemFont(ofSize: CGFloat(fontSize)),
             fontWeight: effectiveDepth == 0 ? .medium : .regular
         )
         #else
         OutlineTextField(
             text: Binding(
                 get: { node.title },
-                set: { node.title = $0 }
+                set: { newValue in
+                    if !isLockedByOtherWindow {
+                        node.title = newValue
+                    }
+                }
             ),
-            isFocused: isNodeFocused,
+            isFocused: isNodeFocused && !isLockedByOtherWindow,
             onFocusChange: { focused in
                 if focused && !isNodeFocused {
-                    document.setFocus(node)
+                    tryFocusNode()
                 }
             },
             font: .body,
@@ -165,16 +229,25 @@ struct NodeRow: View {
         case .navigateDown:
             document.moveFocusDown()
         case .zoomIn:
-            withAnimation(.easeOut(duration: 0.2)) {
-                document.zoomIn()
+            if let focused = document.focusedNode {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    zoomedNodeId = focused.id
+                }
             }
         case .zoomOut:
-            withAnimation(.easeOut(duration: 0.2)) {
-                document.zoomOut()
+            if let zoomedId = zoomedNodeId,
+               let zoomed = document.root.find(id: zoomedId) {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    if let parent = zoomed.parent, !parent.isRoot {
+                        zoomedNodeId = parent.id
+                    } else {
+                        zoomedNodeId = nil
+                    }
+                }
             }
         case .zoomToRoot:
             withAnimation(.easeOut(duration: 0.2)) {
-                document.zoomToRoot()
+                zoomedNodeId = nil
             }
         case .progressiveSelectDown:
             break
@@ -182,6 +255,8 @@ struct NodeRow: View {
             withAnimation(.easeOut(duration: 0.15)) {
                 document.deleteFocusedWithChildren()
             }
+        case .toggleTask:
+            node.toggleTask()
         }
     }
     #endif
@@ -199,6 +274,8 @@ struct NodeRow: View {
 
 #Preview {
     @Previewable @State var document = OutlineDocument.createSample()
+    @Previewable @State var zoomedNodeId: UUID? = nil
+    @Previewable @State var fontSize: Double = 13.0
 
     ScrollView {
         VStack(spacing: 0) {
@@ -207,7 +284,10 @@ struct NodeRow: View {
                     document: document,
                     node: node,
                     effectiveDepth: node.depth,
-                    treeLines: []
+                    treeLines: [],
+                    windowId: UUID(),
+                    zoomedNodeId: $zoomedNodeId,
+                    fontSize: $fontSize
                 )
             }
         }

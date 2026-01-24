@@ -6,28 +6,63 @@
 //
 
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
-/// Root view that manages document loading and tab state
+/// Root view for each window - manages zoom state per window
 struct ContentView: View {
-    @State private var document: OutlineDocument?
-    @State private var tabs: [TabState] = []
-    @State private var selectedTabId: UUID?
-    @State private var isLoading = true
-    @State private var loadError: Error?
+    /// Unique ID for this window instance
+    @State private var windowId = UUID()
+
+    /// Zoomed node ID for this window (persisted per scene/window)
+    @SceneStorage("zoomedNodeId") private var zoomedNodeIdString: String = ""
+
+    /// Font size for this window (persisted per scene/window)
+    @SceneStorage("fontSize") private var fontSize: Double = 13.0
+
+    /// Computed zoom ID
+    private var zoomedNodeId: UUID? {
+        get { UUID(uuidString: zoomedNodeIdString) }
+    }
+
+    private func setZoomedNodeId(_ id: UUID?) {
+        zoomedNodeIdString = id?.uuidString ?? ""
+    }
 
     var body: some View {
+        let zoomBinding = Binding<UUID?>(
+            get: { zoomedNodeId },
+            set: { setZoomedNodeId($0) }
+        )
+
         Group {
-            if isLoading {
+            if WindowManager.shared.isLoading {
                 loadingView
-            } else if let error = loadError {
+            } else if let error = WindowManager.shared.loadError {
                 errorView(error)
-            } else if let document = document {
-                documentView(document)
+            } else if let document = WindowManager.shared.document {
+                documentView(document, zoomBinding: zoomBinding)
             }
         }
+        .environment(\.windowId, windowId)
+        .focusedSceneValue(\.zoomedNodeId, zoomBinding)
         .task {
-            await loadDocument()
+            await WindowManager.shared.loadDocumentIfNeeded()
+
+            // Check for pending zoom (from Cmd+T)
+            if let pending = WindowManager.shared.pendingZoom {
+                setZoomedNodeId(pending)
+                WindowManager.shared.pendingZoom = nil
+            }
         }
+        .onDisappear {
+            // Release all locks when window closes
+            WindowManager.shared.releaseAllLocks(for: windowId)
+        }
+        #if os(macOS)
+        .background(WindowAccessor(windowId: windowId))
+        #endif
     }
 
     // MARK: - Subviews
@@ -55,7 +90,7 @@ struct ContentView: View {
                 .multilineTextAlignment(.center)
             Button("Try Again") {
                 Task {
-                    await loadDocument()
+                    await WindowManager.shared.reloadDocument()
                 }
             }
             .buttonStyle(.borderedProminent)
@@ -65,136 +100,38 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func documentView(_ document: OutlineDocument) -> some View {
-        if tabs.count <= 1 {
-            // Single tab - no tab bar needed
-            OutlineView(document: document)
-                .focusedValue(\.document, document)
-        } else {
-            // Multiple tabs
-            TabView(selection: $selectedTabId) {
-                ForEach(tabs) { tab in
-                    tabContent(for: tab, document: document)
-                        .tabItem {
-                            Label(tab.title, systemImage: tab.zoomedNodeId == nil ? "list.bullet" : "arrow.right.circle")
-                        }
-                        .tag(tab.id)
-                }
-            }
-            .focusedValue(\.document, document)
-        }
+    private func documentView(_ document: OutlineDocument, zoomBinding: Binding<UUID?>) -> some View {
+        OutlineView(
+            document: document,
+            zoomedNodeId: zoomBinding,
+            windowId: windowId,
+            fontSize: $fontSize
+        )
+        .focusedSceneValue(\.document, document)
+        .focusedSceneValue(\.fontSize, $fontSize)
     }
+}
 
-    @ViewBuilder
-    private func tabContent(for tab: TabState, document: OutlineDocument) -> some View {
-        // If tab has a zoom override, create a view that overrides the document's zoom
-        if let zoomedId = tab.zoomedNodeId {
-            OutlineView(document: document)
-                .onAppear {
-                    // Set zoom when tab becomes active
-                    if selectedTabId == tab.id {
-                        document.zoomedNodeId = zoomedId
-                    }
-                }
-                .onChange(of: selectedTabId) { _, newId in
-                    if newId == tab.id {
-                        document.zoomedNodeId = zoomedId
-                    }
-                }
-        } else {
-            OutlineView(document: document)
-                .onAppear {
-                    if selectedTabId == tab.id {
-                        document.zoomedNodeId = nil
-                    }
-                }
-                .onChange(of: selectedTabId) { _, newId in
-                    if newId == tab.id {
-                        document.zoomedNodeId = nil
-                    }
-                }
-        }
-    }
+// MARK: - Window Accessor (for native tab support)
 
-    // MARK: - Document Loading
+#if os(macOS)
+struct WindowAccessor: NSViewRepresentable {
+    let windowId: UUID
 
-    private func loadDocument() async {
-        isLoading = true
-        loadError = nil
-
-        do {
-            let icloud = iCloudManager.shared
-
-            // Wait briefly for iCloud to initialize
-            try await Task.sleep(for: .milliseconds(500))
-
-            if icloud.isICloudAvailable {
-                // Load from iCloud
-                let doc = try await icloud.loadDocument()
-                doc.autoSaveEnabled = true
-                self.document = doc
-            } else {
-                // Fallback to local storage
-                let doc = try icloud.loadLocalDocument()
-                doc.autoSaveEnabled = true
-                self.document = doc
-            }
-
-            // Initialize with main tab
-            let mainTab = TabState(title: "Main", zoomedNodeId: nil)
-            tabs = [mainTab]
-            selectedTabId = mainTab.id
-
-        } catch {
-            loadError = error
-        }
-
-        isLoading = false
-    }
-
-    // MARK: - Tab Management
-
-    func createNewTab(withZoom zoomedNodeId: UUID? = nil, title: String = "New Tab") {
-        let newTab = TabState(title: title, zoomedNodeId: zoomedNodeId)
-        tabs.append(newTab)
-        selectedTabId = newTab.id
-    }
-
-    func closeCurrentTab() {
-        guard tabs.count > 1, let currentId = selectedTabId else { return }
-
-        if let index = tabs.firstIndex(where: { $0.id == currentId }) {
-            tabs.remove(at: index)
-            // Select adjacent tab
-            if index < tabs.count {
-                selectedTabId = tabs[index].id
-            } else if index > 0 {
-                selectedTabId = tabs[index - 1].id
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                // Enable automatic tabbing
+                window.tabbingMode = .automatic
             }
         }
+        return view
     }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
-
-// MARK: - Tab State
-
-struct TabState: Identifiable {
-    let id = UUID()
-    var title: String
-    var zoomedNodeId: UUID?
-}
-
-// MARK: - Environment Key for Tab Management
-
-struct TabManagerKey: EnvironmentKey {
-    static let defaultValue: ContentView? = nil
-}
-
-extension EnvironmentValues {
-    var tabManager: ContentView? {
-        get { self[TabManagerKey.self] }
-        set { self[TabManagerKey.self] = newValue }
-    }
-}
+#endif
 
 #Preview {
     ContentView()

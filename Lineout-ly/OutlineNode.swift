@@ -13,6 +13,8 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
     var title: String
     var body: String
     var isCollapsed: Bool
+    var isTask: Bool
+    var isTaskCompleted: Bool
     var children: [OutlineNode]
     weak var parent: OutlineNode?
 
@@ -63,12 +65,16 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         title: String = "",
         body: String = "",
         isCollapsed: Bool = false,
+        isTask: Bool = false,
+        isTaskCompleted: Bool = false,
         children: [OutlineNode] = []
     ) {
         self.id = id
         self.title = title
         self.body = body
         self.isCollapsed = isCollapsed
+        self.isTask = isTask
+        self.isTaskCompleted = isTaskCompleted
         self.children = children
 
         // Set parent references for children
@@ -191,6 +197,30 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         isCollapsed = true
         for child in children {
             child.collapseAll()
+        }
+    }
+
+    // MARK: - Task
+
+    /// Cycles through: normal bullet → task (uncompleted) → task (completed) → normal bullet
+    func toggleTask() {
+        if !isTask {
+            // Normal → Task (uncompleted)
+            isTask = true
+            isTaskCompleted = false
+        } else if !isTaskCompleted {
+            // Task (uncompleted) → Task (completed)
+            isTaskCompleted = true
+        } else {
+            // Task (completed) → Normal
+            isTask = false
+            isTaskCompleted = false
+        }
+    }
+
+    func toggleTaskCompleted() {
+        if isTask {
+            isTaskCompleted.toggle()
         }
     }
 }

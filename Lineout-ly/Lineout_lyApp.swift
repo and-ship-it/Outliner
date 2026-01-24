@@ -35,6 +35,8 @@ struct Lineout_lyApp: App {
 
 struct OutlineCommands: Commands {
     @FocusedValue(\.document) var document
+    @FocusedValue(\.zoomedNodeId) var zoomedNodeIdBinding
+    @FocusedValue(\.fontSize) var fontSizeBinding
 
     var body: some Commands {
         // File menu additions
@@ -45,6 +47,26 @@ struct OutlineCommands: Commands {
                 showInFinder()
             }
             .keyboardShortcut("R", modifiers: [.command, .shift])
+        }
+
+        // Tab commands
+        CommandGroup(before: .windowArrangement) {
+            Button("New Tab") {
+                openNewTab()
+            }
+            .keyboardShortcut("t", modifiers: .command)
+
+            Divider()
+
+            // Tab switching shortcuts (Cmd+1 through Cmd+9)
+            ForEach(1...9, id: \.self) { index in
+                Button("Select Tab \(index)") {
+                    selectTab(at: index - 1)
+                }
+                .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
+            }
+
+            Divider()
         }
 
         // Edit menu additions
@@ -73,28 +95,39 @@ struct OutlineCommands: Commands {
             Divider()
 
             Button("Zoom In") {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    document?.zoomIn()
-                }
+                zoomIn()
             }
             .keyboardShortcut(".", modifiers: .command)
             .disabled(document == nil)
 
             Button("Zoom Out") {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    document?.zoomOut()
-                }
+                zoomOut()
             }
             .keyboardShortcut(",", modifiers: .command)
             .disabled(document == nil)
 
             Button("Zoom to Root") {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    document?.zoomToRoot()
-                }
+                zoomToRoot()
             }
             .keyboardShortcut(.escape, modifiers: [])
             .disabled(document == nil)
+
+            Divider()
+
+            Button("Increase Font Size") {
+                increaseFontSize()
+            }
+            .keyboardShortcut("+", modifiers: .command)
+
+            Button("Decrease Font Size") {
+                decreaseFontSize()
+            }
+            .keyboardShortcut("-", modifiers: .command)
+
+            Button("Reset Font Size") {
+                resetFontSize()
+            }
+            .keyboardShortcut("0", modifiers: .command)
         }
 
         // Outline menu
@@ -159,6 +192,77 @@ struct OutlineCommands: Commands {
         }
     }
 
+    // MARK: - Tab Actions
+
+    private func openNewTab() {
+        #if os(macOS)
+        // Set pending zoom to current focused node
+        let focusedId = document?.focusedNodeId
+        WindowManager.shared.pendingZoom = focusedId
+
+        // Trigger native "New Tab" which creates a new window in the same tab group
+        NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+        #endif
+    }
+
+    private func selectTab(at index: Int) {
+        #if os(macOS)
+        guard let window = NSApp.keyWindow,
+              let tabGroup = window.tabGroup,
+              index < tabGroup.windows.count else { return }
+
+        let targetWindow = tabGroup.windows[index]
+        targetWindow.makeKeyAndOrderFront(nil)
+        #endif
+    }
+
+    // MARK: - Zoom Actions
+
+    private func zoomIn() {
+        guard let doc = document,
+              let focused = doc.focusedNode else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            zoomedNodeIdBinding?.wrappedValue = focused.id
+        }
+    }
+
+    private func zoomOut() {
+        guard let doc = document,
+              let zoomedId = zoomedNodeIdBinding?.wrappedValue,
+              let zoomed = doc.root.find(id: zoomedId) else { return }
+        withAnimation(.easeOut(duration: 0.2)) {
+            if let parent = zoomed.parent, !parent.isRoot {
+                zoomedNodeIdBinding?.wrappedValue = parent.id
+            } else {
+                zoomedNodeIdBinding?.wrappedValue = nil
+            }
+        }
+    }
+
+    private func zoomToRoot() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            zoomedNodeIdBinding?.wrappedValue = nil
+        }
+    }
+
+    // MARK: - Font Size Actions
+
+    private func increaseFontSize() {
+        guard let binding = fontSizeBinding else { return }
+        let newSize = min(binding.wrappedValue + 1, 32) // Max 32pt
+        binding.wrappedValue = newSize
+    }
+
+    private func decreaseFontSize() {
+        guard let binding = fontSizeBinding else { return }
+        let newSize = max(binding.wrappedValue - 1, 9) // Min 9pt
+        binding.wrappedValue = newSize
+    }
+
+    private func resetFontSize() {
+        fontSizeBinding?.wrappedValue = 13 // Default size
+    }
+
     // MARK: - Show in Finder
 
     private func showInFinder() {
@@ -171,5 +275,31 @@ struct OutlineCommands: Commands {
             NSWorkspace.shared.activateFileViewerSelecting([iCloudManager.shared.localFallbackURL])
         }
         #endif
+    }
+}
+
+// MARK: - Focused Value for Zoomed Node ID
+
+struct FocusedZoomedNodeIdKey: FocusedValueKey {
+    typealias Value = Binding<UUID?>
+}
+
+extension FocusedValues {
+    var zoomedNodeId: Binding<UUID?>? {
+        get { self[FocusedZoomedNodeIdKey.self] }
+        set { self[FocusedZoomedNodeIdKey.self] = newValue }
+    }
+}
+
+// MARK: - Focused Value for Font Size
+
+struct FocusedFontSizeKey: FocusedValueKey {
+    typealias Value = Binding<Double>
+}
+
+extension FocusedValues {
+    var fontSize: Binding<Double>? {
+        get { self[FocusedFontSizeKey.self] }
+        set { self[FocusedFontSizeKey.self] = newValue }
     }
 }

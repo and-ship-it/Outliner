@@ -10,23 +10,33 @@ import SwiftUI
 /// The main outline view displaying the entire document
 struct OutlineView: View {
     @Bindable var document: OutlineDocument
+    @Binding var zoomedNodeId: UUID?
+    let windowId: UUID
+    @Binding var fontSize: Double
+
     @State private var hasSetInitialFocus = false
+
+    /// The zoomed node based on zoomedNodeId
+    private var zoomedNode: OutlineNode? {
+        guard let id = zoomedNodeId else { return nil }
+        return document.root.find(id: id)
+    }
+
+    /// Breadcrumbs path to the zoomed node
+    private var breadcrumbs: [OutlineNode] {
+        guard let zoomed = zoomedNode else { return [] }
+        var path: [OutlineNode] = []
+        var current = zoomed.parent
+        while let node = current, !node.isRoot {
+            path.insert(node, at: 0)
+            current = node.parent
+        }
+        return path
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Breadcrumbs (when zoomed)
-            if document.zoomedNodeId != nil {
-                BreadcrumbView(document: document)
-                Divider()
-            }
-
-            // Zoomed node header (when zoomed)
-            if let zoomed = document.zoomedNode {
-                zoomedHeader(zoomed)
-                Divider()
-            }
-
-            // Outline content
+            // Outline content - starts directly with bullets, no header
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0, pinnedViews: []) {
@@ -39,7 +49,10 @@ struct OutlineView: View {
                                 effectiveDepth: item.depth,
                                 treeLines: item.treeLines,
                                 hasNextNode: index < nodes.count - 1,
-                                isOnlyNode: isOnlyOne
+                                isOnlyNode: isOnlyOne,
+                                windowId: windowId,
+                                zoomedNodeId: $zoomedNodeId,
+                                fontSize: $fontSize
                             )
                             .id(item.node.id)
                         }
@@ -54,36 +67,119 @@ struct OutlineView: View {
                     }
                 }
             }
+
+            // Breadcrumbs at bottom (when zoomed)
+            if zoomedNodeId != nil {
+                bottomBreadcrumbs
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.textBackgroundColor)
         .focusedValue(\.document, document)
         .onAppear {
-            // Set initial focus to first visible node when document opens
-            if !hasSetInitialFocus, document.focusedNodeId == nil {
-                if let firstNode = document.visibleNodes.first {
-                    // Use a small delay to ensure the view hierarchy is fully established
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        document.focusedNodeId = firstNode.id
-                    }
-                }
-                hasSetInitialFocus = true
+            // Set focus to first visible node when view appears
+            setFocusToFirstNode()
+        }
+        .onChange(of: zoomedNodeId) { _, _ in
+            // When zoom changes, focus first visible node
+            setFocusToFirstNode()
+        }
+    }
+
+    /// Focus on the first visible node
+    private func setFocusToFirstNode() {
+        let nodes = nodesWithDepth
+        if let firstNode = nodes.first {
+            // Use a small delay to ensure the view hierarchy is fully established
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                document.focusedNodeId = firstNode.node.id
             }
         }
+        hasSetInitialFocus = true
     }
 
     // MARK: - Computed
 
     /// Visible nodes with their effective depth and tree lines (accounting for zoom)
+    /// When zoomed, includes the zoomed node itself as the first item at depth 0
     /// Note: We reference structureVersion to ensure SwiftUI observes structural changes
     private var nodesWithDepth: [(node: OutlineNode, depth: Int, treeLines: [Bool])] {
         _ = document.structureVersion // Force observation of structural changes
-        let zoomDepth = document.zoomedNode?.depth ?? 0
-        return document.visibleNodes.map { node in
-            let effectiveDepth = max(0, node.depth - zoomDepth)
-            let treeLines = calculateTreeLines(for: node, zoomDepth: zoomDepth)
-            return (node: node, depth: effectiveDepth, treeLines: treeLines)
+
+        var result: [(node: OutlineNode, depth: Int, treeLines: [Bool])] = []
+
+        // If zoomed, include the zoomed node itself as the first item
+        if let zoomed = zoomedNode {
+            result.append((node: zoomed, depth: 0, treeLines: []))
+
+            // Then add its visible children with depth starting at 1
+            let children = zoomed.flattenedVisible()
+            for child in children {
+                let effectiveDepth = child.depth - zoomed.depth
+                let treeLines = calculateTreeLines(for: child, zoomDepth: zoomed.depth)
+                result.append((node: child, depth: effectiveDepth, treeLines: treeLines))
+            }
+        } else {
+            // Not zoomed - show all visible nodes from root
+            let zoomDepth = 0
+            for node in document.visibleNodes {
+                let effectiveDepth = max(0, node.depth - zoomDepth)
+                let treeLines = calculateTreeLines(for: node, zoomDepth: zoomDepth)
+                result.append((node: node, depth: effectiveDepth, treeLines: treeLines))
+            }
         }
+
+        return result
+    }
+
+    // MARK: - Subviews
+
+    /// Breadcrumbs shown at the bottom when zoomed
+    private var bottomBreadcrumbs: some View {
+        HStack(spacing: 4) {
+            // Home button
+            Button(action: {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    zoomedNodeId = nil
+                }
+            }) {
+                Image(systemName: "house")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+
+            // Breadcrumb path
+            ForEach(breadcrumbs) { node in
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9))
+
+                Button(action: {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        zoomedNodeId = node.id
+                    }
+                }) {
+                    Text(node.title.isEmpty ? "Untitled" : String(node.title.prefix(15)))
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Current zoomed node
+            if let zoomed = zoomedNode {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9))
+                Text(zoomed.title.isEmpty ? "Untitled" : String(zoomed.title.prefix(15)))
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+        .foregroundStyle(.secondary.opacity(0.7))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(Color.textBackgroundColor)
     }
 
     /// Calculate which depth levels should show vertical tree lines
@@ -95,7 +191,7 @@ struct OutlineView: View {
         // Walk up the ancestor chain (excluding the node itself)
         while let parent = current.parent {
             // Don't go above the zoom level
-            if parent.id == document.zoomedNodeId || parent.isRoot {
+            if parent.id == zoomedNodeId || parent.isRoot {
                 break
             }
 
@@ -109,27 +205,28 @@ struct OutlineView: View {
         return lines
     }
 
-    // MARK: - Subviews
+    // MARK: - Zoom Operations
 
-    @ViewBuilder
-    private func zoomedHeader(_ node: OutlineNode) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(node.title)
-                .font(.title2)
-                .fontWeight(.semibold)
-
-            if node.hasBody {
-                Text(node.body)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .background(.bar)
+    /// Zoom into the focused node
+    func zoomIn() {
+        guard let focused = document.focusedNode, focused.hasChildren else { return }
+        zoomedNodeId = focused.id
     }
 
+    /// Zoom out one level
+    func zoomOut() {
+        guard let zoomed = zoomedNode else { return }
+        if let parent = zoomed.parent, !parent.isRoot {
+            zoomedNodeId = parent.id
+        } else {
+            zoomedNodeId = nil
+        }
+    }
+
+    /// Zoom to root (reset zoom)
+    func zoomToRoot() {
+        zoomedNodeId = nil
+    }
 }
 
 // MARK: - macOS Background Color Extension
@@ -146,7 +243,9 @@ extension Color {
 
 #Preview {
     @Previewable @State var document = OutlineDocument.createSample()
+    @Previewable @State var zoomedNodeId: UUID? = nil
+    @Previewable @State var fontSize: Double = 13.0
 
-    OutlineView(document: document)
+    OutlineView(document: document, zoomedNodeId: $zoomedNodeId, windowId: UUID(), fontSize: $fontSize)
         .frame(width: 500, height: 700)
 }

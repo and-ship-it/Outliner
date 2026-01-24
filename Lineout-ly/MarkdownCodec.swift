@@ -68,8 +68,22 @@ struct MarkdownCodec {
 
             // Check if this is a bullet line
             if content.hasPrefix(bulletPrefix) {
-                let title = String(content.dropFirst(bulletPrefix.count))
-                let node = OutlineNode(title: title)
+                var title = String(content.dropFirst(bulletPrefix.count))
+                var isTask = false
+                var isTaskCompleted = false
+
+                // Check for task checkbox: [ ] or [x]
+                if title.hasPrefix("[ ] ") {
+                    isTask = true
+                    isTaskCompleted = false
+                    title = String(title.dropFirst(4))
+                } else if title.hasPrefix("[x] ") || title.hasPrefix("[X] ") {
+                    isTask = true
+                    isTaskCompleted = true
+                    title = String(title.dropFirst(4))
+                }
+
+                let node = OutlineNode(title: title, isTask: isTask, isTaskCompleted: isTaskCompleted)
                 parent.addChild(node)
                 index += 1
 
@@ -169,8 +183,9 @@ struct MarkdownCodec {
     private static func serializeNode(_ node: OutlineNode, indent: Int, into lines: inout [String]) {
         let indentString = String(repeating: " ", count: indent * indentSize)
 
-        // Title line
-        lines.append("\(indentString)\(bulletPrefix)\(node.title)")
+        // Title line (with optional task checkbox)
+        let taskPrefix = node.isTask ? (node.isTaskCompleted ? "[x] " : "[ ] ") : ""
+        lines.append("\(indentString)\(bulletPrefix)\(taskPrefix)\(node.title)")
 
         // Body (if present)
         if node.hasBody {
