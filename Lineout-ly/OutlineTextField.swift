@@ -60,6 +60,8 @@ class WrappingTextFieldHost: NSView {
 struct OutlineTextField: NSViewRepresentable {
     @Binding var text: String
     var isFocused: Bool
+    var isLastNode: Bool = false  // Whether this is the last visible node in the document
+    var placeholder: String? = nil  // Placeholder text shown when empty
     var onFocusChange: (Bool) -> Void
     var onAction: ((OutlineAction) -> Void)?
     var onSplitLine: ((String) -> Void)?  // Called when splitting line, passes text after cursor
@@ -90,6 +92,17 @@ struct OutlineTextField: NSViewRepresentable {
         // High priority for vertical - we want to take up the space we need
         textField.setContentHuggingPriority(.required, for: .vertical)
         textField.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        // Set placeholder if provided
+        if let placeholder = placeholder {
+            textField.placeholderAttributedString = NSAttributedString(
+                string: placeholder,
+                attributes: [
+                    .foregroundColor: NSColor.placeholderTextColor,
+                    .font: NSFont.systemFont(ofSize: NSFont.systemFontSize)
+                ]
+            )
+        }
 
         hostView.textField = textField
         hostView.addSubview(textField)
@@ -245,16 +258,21 @@ struct OutlineTextField: NSViewRepresentable {
                 }
                 // Only navigate to next bullet if cursor is on last visual line
                 if isAtLastVisualLine(textView) {
-                    let cursorLocation = textView.selectedRange().location
-                    let textLength = textView.string.count
+                    // If this is the last node in the document, move cursor to end instead
+                    if parent.isLastNode {
+                        let cursorLocation = textView.selectedRange().location
+                        let textLength = textView.string.count
 
-                    // If cursor is not at end of text, move to end first
-                    if cursorLocation < textLength {
-                        textView.setSelectedRange(NSRange(location: textLength, length: 0))
+                        // If cursor is not at end of text, move to end
+                        if cursorLocation < textLength {
+                            textView.setSelectedRange(NSRange(location: textLength, length: 0))
+                            return true
+                        }
+                        // Already at end, nothing to do
                         return true
                     }
 
-                    // Cursor is at end, try to navigate to next bullet
+                    // Not the last node, navigate to next bullet
                     parent.onAction?(.navigateDown)
                     return true
                 }
@@ -357,44 +375,45 @@ struct OutlineTextField: NSViewRepresentable {
         /// Determines if the cursor is on the last visual line of wrapped text
         private func isAtLastVisualLine(_ textView: NSTextView) -> Bool {
             guard let layoutManager = textView.layoutManager,
-                  let textContainer = textView.textContainer else {
+                  let _ = textView.textContainer else {
                 return true // Default to allowing navigation if we can't determine
             }
 
-            let selectedRange = textView.selectedRange()
-            let cursorLocation = selectedRange.location
             let totalGlyphs = layoutManager.numberOfGlyphs
             let textLength = textView.string.count
 
-            // Empty text
+            // Empty text - always on last line
             if totalGlyphs == 0 || textLength == 0 {
                 return true
             }
 
-            // Edge case: cursor is at the very end of the text (after the last character)
-            // This position is textLength, which is beyond the last character index
-            // For this case, we need to check the glyph for the last actual character
+            // Check if text has only one line (no wrapping) - always on last line
+            var firstLineRange = NSRange(location: 0, length: 0)
+            layoutManager.lineFragmentRect(forGlyphAt: 0, effectiveRange: &firstLineRange)
+
+            var lastLineRange = NSRange(location: 0, length: 0)
+            layoutManager.lineFragmentRect(forGlyphAt: totalGlyphs - 1, effectiveRange: &lastLineRange)
+
+            // If first and last line fragments are the same, text is single line
+            if firstLineRange.location == lastLineRange.location {
+                return true
+            }
+
+            // Multi-line text: check cursor position
+            let selectedRange = textView.selectedRange()
+            let cursorLocation = selectedRange.location
+
             let glyphIndex: Int
             if cursorLocation >= textLength {
-                // Cursor is at or beyond end of text - use the last valid glyph
                 glyphIndex = totalGlyphs - 1
             } else {
-                // Normal case: get glyph for current cursor position
                 glyphIndex = layoutManager.glyphIndexForCharacter(at: cursorLocation)
             }
 
-            // Find which line fragment the cursor is on
-            var lineFragmentRange = NSRange(location: 0, length: 0)
-            layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineFragmentRange)
+            var cursorLineRange = NSRange(location: 0, length: 0)
+            layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &cursorLineRange)
 
-            // Find the last line fragment in the entire text
-            let lastGlyphIndex = totalGlyphs - 1
-            var lastLineFragmentRange = NSRange(location: 0, length: 0)
-            layoutManager.lineFragmentRect(forGlyphAt: lastGlyphIndex, effectiveRange: &lastLineFragmentRange)
-
-            // If our current line fragment starts at the same position as the last line fragment,
-            // we're on the last visual line
-            return lineFragmentRange.location == lastLineFragmentRange.location
+            return cursorLineRange.location == lastLineRange.location
         }
     }
 }

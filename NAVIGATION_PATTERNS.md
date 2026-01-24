@@ -35,14 +35,13 @@ This document describes all navigation patterns, keyboard shortcuts, and interac
 
 | Context | Behavior |
 |---------|----------|
-| Cursor on last visual line, NOT at end of text | Move cursor to end of text |
-| Cursor on last visual line, AT end of text | Navigate to next bullet (focus moves down) |
-| Cursor on wrapped line (not last) | Move cursor down within the text (default OS behavior) |
-| Empty bullet | Navigate to next bullet |
-| Last bullet in document, cursor not at end | Move cursor to end of text |
-| Last bullet in document, cursor at end | No action (stay at end) |
+| Cursor on last visual line, NOT last bullet | Navigate to next bullet (cursor at beginning) |
+| Cursor on wrapped line (not last visual line) | Move cursor down within the text (default OS behavior) |
+| Empty bullet, NOT last bullet | Navigate to next bullet |
+| **Last bullet in document**, cursor not at end | Move cursor to end of text |
+| **Last bullet in document**, cursor at end | No action (stay at end) |
 
-**Implementation Note:** When on the last bullet and pressing down, first move cursor to end of text. This provides a smooth "end of document" experience.
+**Implementation Note:** The "move cursor to end" behavior ONLY happens when on the actual last visible bullet in the document/zoomed view. Normal navigation always moves to the next bullet with cursor at the beginning. Use `isLastNode` flag to determine if current node is the last one.
 
 ### Left Arrow (←)
 
@@ -345,6 +344,38 @@ When modifying navigation code, verify these scenarios:
 - [ ] Cursor at beginning after focus
 - [ ] Can immediately type after focus
 - [ ] Can immediately navigate after focus (without typing first)
+
+---
+
+## Placeholder & Minimum Node Behavior
+
+### Placeholder Text
+
+When the document has only one empty bullet, it displays placeholder text:
+
+> "Tell me, what is it you plan to do with your one wild and precious life?"
+
+**Rules:**
+- Placeholder only appears when: `isOnlyNode == true` AND `node.title.isEmpty == true`
+- Placeholder text is grey (uses system placeholder color)
+- Placeholder disappears immediately when user starts typing
+- Placeholder does not appear on bullets with any content
+
+### Minimum Node Guarantee
+
+The document always maintains at least one bullet point.
+
+| Action | Behavior |
+|--------|----------|
+| Delete last remaining bullet | Clears the bullet content but keeps the bullet |
+| Delete last bullet with children | Clears content and removes children, keeps the bullet |
+| New document | Starts with one empty bullet (with placeholder) |
+| Load empty file | Creates one empty bullet |
+
+**Implementation:**
+- `ensureMinimumNode()` - Creates an empty node if `root.children` is empty
+- Delete methods check if deleting the last visible node and clear instead of delete
+- Document init ensures at least one child node exists
 
 ---
 

@@ -30,12 +30,16 @@ struct OutlineView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0, pinnedViews: []) {
-                        ForEach(nodesWithDepth, id: \.node.id) { item in
+                        let nodes = nodesWithDepth
+                        let isOnlyOne = nodes.count == 1
+                        ForEach(Array(nodes.enumerated()), id: \.element.node.id) { index, item in
                             NodeRow(
                                 document: document,
                                 node: item.node,
                                 effectiveDepth: item.depth,
-                                treeLines: item.treeLines
+                                treeLines: item.treeLines,
+                                isLastNode: index == nodes.count - 1,
+                                isOnlyNode: isOnlyOne
                             )
                             .id(item.node.id)
                         }

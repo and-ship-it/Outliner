@@ -13,9 +13,13 @@ struct NodeRow: View {
     let node: OutlineNode
     let effectiveDepth: Int
     let treeLines: [Bool]  // Which depth levels should show a vertical line
+    var isLastNode: Bool = false  // Whether this is the last visible node
+    var isOnlyNode: Bool = false  // Whether this is the only node (for placeholder)
 
     private let indentWidth: CGFloat = 20
     private let lineColor = Color.gray.opacity(0.3)
+
+    private let placeholderText = "Tell me, what is it you plan to do with your one wild and precious life?"
 
     var isNodeFocused: Bool {
         document.focusedNodeId == node.id
@@ -86,6 +90,8 @@ struct NodeRow: View {
                 set: { node.title = $0 }
             ),
             isFocused: isNodeFocused,
+            isLastNode: isLastNode,
+            placeholder: isOnlyNode && node.title.isEmpty ? placeholderText : nil,
             onFocusChange: { focused in
                 if focused && !isNodeFocused {
                     document.setFocus(node)

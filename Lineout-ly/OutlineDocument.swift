@@ -29,6 +29,12 @@ final class OutlineDocument: ObservableObject {
 
     init(root: OutlineNode = OutlineNode(title: "__root__")) {
         self.root = root
+        // Ensure there's always at least one node
+        if root.children.isEmpty {
+            let emptyNode = OutlineNode(title: "")
+            root.addChild(emptyNode)
+            self.focusedNodeId = emptyNode.id
+        }
     }
 
     /// Call this after any structural change (collapse, expand, move, add, delete)
@@ -276,11 +282,19 @@ final class OutlineDocument: ObservableObject {
     func deleteFocused() {
         guard let focused = focusedNode else { return }
 
+        // Check if this is the last node - if so, just clear it instead of deleting
+        let visible = visibleNodes
+        if visible.count == 1 && focused == visible.first {
+            // Last node - clear its content but keep it
+            focused.title = ""
+            focused.body = ""
+            return
+        }
+
         // Move to trash before deleting
         TrashBin.shared.trash(focused)
 
         // Find next node to focus
-        let visible = visibleNodes
         if let index = visible.firstIndex(of: focused) {
             if index < visible.count - 1 {
                 focusedNodeId = visible[index + 1].id
@@ -292,12 +306,26 @@ final class OutlineDocument: ObservableObject {
         }
 
         focused.removeFromParent()
+
+        // Ensure there's always at least one node
+        ensureMinimumNode()
+
         structureDidChange()
     }
 
     /// Delete the focused node and all its children
     func deleteFocusedWithChildren() {
         guard let focused = focusedNode else { return }
+
+        // Check if this is the last top-level node - if so, just clear it instead of deleting
+        let visible = visibleNodes
+        if visible.count == 1 && focused == visible.first {
+            // Last node - clear its content and children but keep it
+            focused.title = ""
+            focused.body = ""
+            focused.children.removeAll()
+            return
+        }
 
         // Move to trash before deleting (includes all children)
         TrashBin.shared.trash(focused)
@@ -315,7 +343,20 @@ final class OutlineDocument: ObservableObject {
 
         // Remove the node (children are automatically removed with it)
         focused.removeFromParent()
+
+        // Ensure there's always at least one node
+        ensureMinimumNode()
+
         structureDidChange()
+    }
+
+    /// Ensures there's always at least one node in the document
+    private func ensureMinimumNode() {
+        if root.children.isEmpty {
+            let newNode = OutlineNode(title: "")
+            root.addChild(newNode)
+            focusedNodeId = newNode.id
+        }
     }
 
     // MARK: - Node Movement
