@@ -27,6 +27,7 @@ enum OutlineAction {
     case zoomOut
     case zoomToRoot
     case progressiveSelectDown
+    case progressiveSelectAll  // Cmd+A progressive selection
     case deleteWithChildren
     case toggleTask
     case toggleFocusMode
@@ -548,7 +549,7 @@ class OutlineNSTextField: NSTextField {
     var actionHandler: ((OutlineAction) -> Void)?
     var onMouseDownFocus: (() -> Void)?  // Called when text field gains focus via mouse click
 
-    // Progressive selection state
+    // Progressive selection state (Shift+Down)
     private enum SelectionLevel {
         case none
         case firstWord
@@ -557,6 +558,10 @@ class OutlineNSTextField: NSTextField {
     }
     private var currentSelectionLevel: SelectionLevel = .none
     private var lastShiftDownTime: TimeInterval = 0
+
+    // Progressive Cmd+A selection state
+    private var cmdASelectionLevel: Int = 0  // 0 = text only, 1+ = bullet expansion
+    private var lastCmdATime: TimeInterval = 0
 
     // Autocomplete state
     private var currentSuggestion: String = ""
@@ -728,6 +733,7 @@ class OutlineNSTextField: NSTextField {
     /// Reset selection state (called when text changes)
     func resetSelectionState() {
         currentSelectionLevel = .none
+        cmdASelectionLevel = 0
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -856,11 +862,52 @@ class OutlineNSTextField: NSTextField {
                 return true
             }
 
+        case 0: // A
+            if hasCommand && !hasShift && !hasOption {
+                // Cmd+A: Progressive select all
+                return handleProgressiveCmdA()
+            }
+
         default:
             break
         }
 
         return super.performKeyEquivalent(with: event)
+    }
+
+    /// Handle progressive Cmd+A selection
+    /// First press: select all text in bullet
+    /// Subsequent presses: expand to sibling bullets, then parent's siblings, etc.
+    private func handleProgressiveCmdA() -> Bool {
+        guard let editor = currentEditor() as? NSTextView else { return false }
+
+        let currentTime = Date.timeIntervalSinceReferenceDate
+        let timeSinceLastPress = currentTime - lastCmdATime
+
+        // Reset if too much time has passed (more than 1.5 seconds)
+        if timeSinceLastPress > 1.5 {
+            cmdASelectionLevel = 0
+        }
+
+        lastCmdATime = currentTime
+
+        let text = editor.string
+        let currentSelection = editor.selectedRange()
+
+        // Check if all text is already selected
+        let isAllTextSelected = currentSelection.location == 0 && currentSelection.length == text.count
+
+        if cmdASelectionLevel == 0 && !isAllTextSelected {
+            // First Cmd+A: select all text in this bullet
+            editor.setSelectedRange(NSRange(location: 0, length: text.count))
+            cmdASelectionLevel = 1
+            return true
+        } else {
+            // Already selected all text (or second+ press): expand to bullets
+            cmdASelectionLevel += 1
+            actionHandler?(.progressiveSelectAll)
+            return true
+        }
     }
 
     override func keyDown(with event: NSEvent) {

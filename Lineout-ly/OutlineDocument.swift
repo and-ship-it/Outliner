@@ -22,6 +22,9 @@ final class OutlineDocument {
     /// Current zoom root (nil = document root, showing all top-level items)
     var zoomedNodeId: UUID?
 
+    /// Multi-selection: set of selected node IDs (for progressive Cmd+A)
+    var selectedNodeIds: Set<UUID> = []
+
     /// Version counter - increments on any structural change to trigger re-renders
     var structureVersion: Int = 0
 
@@ -120,6 +123,10 @@ final class OutlineDocument {
     // MARK: - Focus Operations
 
     func setFocus(_ node: OutlineNode?) {
+        // Clear multi-selection when changing focus
+        if node?.id != focusedNodeId {
+            clearSelection()
+        }
         focusedNodeId = node?.id
     }
 
@@ -161,6 +168,80 @@ final class OutlineDocument {
             focused.expand()
         }
         focusedNodeId = child.id
+    }
+
+    // MARK: - Multi-Selection (Progressive Cmd+A)
+
+    /// Clear multi-selection
+    func clearSelection() {
+        selectedNodeIds.removeAll()
+    }
+
+    /// Check if a node is in the multi-selection
+    func isNodeSelected(_ nodeId: UUID) -> Bool {
+        selectedNodeIds.contains(nodeId)
+    }
+
+    /// Expand selection progressively:
+    /// 1. First call: Select focused node and all siblings (children of same parent)
+    /// 2. Second call: Add parent and all its siblings
+    /// 3. Continue expanding up the tree
+    func expandSelectionProgressively() {
+        guard let focused = focusedNode else { return }
+
+        if selectedNodeIds.isEmpty {
+            // First expansion: select focused node + all siblings
+            if let parent = focused.parent {
+                for sibling in parent.children {
+                    selectedNodeIds.insert(sibling.id)
+                    // Also include all descendants of each sibling
+                    addDescendantsToSelection(sibling)
+                }
+            } else {
+                // No parent (shouldn't happen normally), just select focused
+                selectedNodeIds.insert(focused.id)
+                addDescendantsToSelection(focused)
+            }
+        } else {
+            // Find the highest selected node and expand from its parent
+            if let expansionNode = findHighestSelectedNode() {
+                if let parent = expansionNode.parent, !parent.isRoot {
+                    // Select parent and all its siblings
+                    if let grandparent = parent.parent {
+                        for sibling in grandparent.children {
+                            selectedNodeIds.insert(sibling.id)
+                            addDescendantsToSelection(sibling)
+                        }
+                    }
+                }
+                // If already at root level, selection is complete
+            }
+        }
+    }
+
+    /// Add all descendants of a node to the selection
+    private func addDescendantsToSelection(_ node: OutlineNode) {
+        for child in node.children {
+            selectedNodeIds.insert(child.id)
+            addDescendantsToSelection(child)
+        }
+    }
+
+    /// Find the highest (closest to root) selected node
+    private func findHighestSelectedNode() -> OutlineNode? {
+        var highestNode: OutlineNode? = nil
+        var minDepth = Int.max
+
+        for nodeId in selectedNodeIds {
+            if let node = root.find(id: nodeId) {
+                if node.depth < minDepth {
+                    minDepth = node.depth
+                    highestNode = node
+                }
+            }
+        }
+
+        return highestNode
     }
 
     // MARK: - Collapse/Expand

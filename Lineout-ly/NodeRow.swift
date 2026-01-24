@@ -68,6 +68,11 @@ struct NodeRow: View {
         document.focusedNodeId == node.id
     }
 
+    /// Check if this node is in multi-selection (Cmd+A progressive)
+    var isNodeSelected: Bool {
+        document.isNodeSelected(node.id)
+    }
+
     /// Check if this node is locked by another window
     var isLockedByOtherWindow: Bool {
         WindowManager.shared.isNodeLocked(node.id, for: windowId)
@@ -147,7 +152,11 @@ struct NodeRow: View {
         }
         .padding(.vertical, 1 * scale)
         .contentShape(Rectangle())
+        // Highlight selected nodes (Cmd+A progressive selection)
+        .background(isNodeSelected ? Color.accentColor.opacity(0.15) : Color.clear)
         .onTapGesture {
+            // Clear multi-selection when clicking
+            document.clearSelection()
             tryFocusNode()
         }
         // Dim non-focused nodes in focus mode
@@ -313,6 +322,8 @@ struct NodeRow: View {
             }
         case .progressiveSelectDown:
             break
+        case .progressiveSelectAll:
+            document.expandSelectionProgressively()
         case .deleteWithChildren:
             withAnimation(.easeOut(duration: 0.15)) {
                 document.deleteFocusedWithChildren()
