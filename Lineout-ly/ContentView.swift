@@ -27,6 +27,9 @@ struct ContentView: View {
     /// Search mode - shows search bar
     @State private var isSearching: Bool = false
 
+    /// Always on top mode - window floats above others
+    @State private var isAlwaysOnTop: Bool = false
+
     /// Computed zoom ID
     private var zoomedNodeId: UUID? {
         get { UUID(uuidString: zoomedNodeIdString) }
@@ -97,7 +100,7 @@ struct ContentView: View {
             WindowManager.shared.registerTab(windowId: windowId)
         }
         #if os(macOS)
-        .background(WindowAccessor(windowId: windowId, title: tabTitle))
+        .background(WindowAccessor(windowId: windowId, title: tabTitle, isAlwaysOnTop: isAlwaysOnTop))
         #endif
     }
 
@@ -149,15 +152,17 @@ struct ContentView: View {
         .focusedSceneValue(\.fontSize, $fontSize)
         .focusedSceneValue(\.isFocusMode, $isFocusMode)
         .focusedSceneValue(\.isSearching, $isSearching)
+        .focusedSceneValue(\.isAlwaysOnTop, $isAlwaysOnTop)
     }
 }
 
-// MARK: - Window Accessor (for native tab support and title)
+// MARK: - Window Accessor (for native tab support, title, and always on top)
 
 #if os(macOS)
 struct WindowAccessor: NSViewRepresentable {
     let windowId: UUID
     let title: String
+    let isAlwaysOnTop: Bool
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
@@ -167,16 +172,19 @@ struct WindowAccessor: NSViewRepresentable {
                 window.tabbingMode = .automatic
                 // Set initial title
                 window.title = title
+                // Set initial window level
+                window.level = isAlwaysOnTop ? .floating : .normal
             }
         }
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        // Update window title when it changes
+        // Update window title and level when they change
         DispatchQueue.main.async {
             if let window = nsView.window {
                 window.title = title
+                window.level = isAlwaysOnTop ? .floating : .normal
             }
         }
     }

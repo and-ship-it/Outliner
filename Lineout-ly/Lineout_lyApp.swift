@@ -43,6 +43,7 @@ struct OutlineCommands: Commands {
     @FocusedValue(\.fontSize) var fontSizeBinding
     @FocusedValue(\.isFocusMode) var focusModeBinding
     @FocusedValue(\.isSearching) var searchingBinding
+    @FocusedValue(\.isAlwaysOnTop) var alwaysOnTopBinding
     @AppStorage("autocompleteEnabled") var autocompleteEnabled: Bool = true
     @AppStorage("restorePreviousSession") var restorePreviousSession: Bool = true
 
@@ -162,6 +163,14 @@ struct OutlineCommands: Commands {
                 set: { focusModeBinding?.wrappedValue = $0 }
             ))
             .keyboardShortcut("f", modifiers: [.command, .shift])
+
+            Toggle("Always on Top", isOn: Binding(
+                get: { alwaysOnTopBinding?.wrappedValue ?? false },
+                set: { alwaysOnTopBinding?.wrappedValue = $0 }
+            ))
+            .keyboardShortcut("t", modifiers: [.command, .option])
+
+            Divider()
 
             Toggle("Restore Previous Session on Launch", isOn: $restorePreviousSession)
         }
@@ -370,6 +379,19 @@ extension FocusedValues {
     var isSearching: Binding<Bool>? {
         get { self[FocusedSearchKey.self] }
         set { self[FocusedSearchKey.self] = newValue }
+    }
+}
+
+// MARK: - Focused Value for Always on Top
+
+struct FocusedAlwaysOnTopKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
+extension FocusedValues {
+    var isAlwaysOnTop: Binding<Bool>? {
+        get { self[FocusedAlwaysOnTopKey.self] }
+        set { self[FocusedAlwaysOnTopKey.self] = newValue }
     }
 }
 
