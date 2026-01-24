@@ -36,6 +36,19 @@ struct ContentView: View {
         zoomedNodeIdString = id?.uuidString ?? ""
     }
 
+    /// Tab title based on zoom state
+    private var tabTitle: String {
+        guard let document = WindowManager.shared.document else { return "Lineout" }
+        guard let zoomId = zoomedNodeId,
+              let zoomedNode = document.root.find(id: zoomId) else {
+            return "Home"
+        }
+        // Use the zoomed node's title, or "Untitled" if empty
+        let title = zoomedNode.title.isEmpty ? "Untitled" : zoomedNode.title
+        // Truncate if too long
+        return String(title.prefix(25))
+    }
+
     var body: some View {
         let zoomBinding = Binding<UUID?>(
             get: { zoomedNodeId },
@@ -84,7 +97,7 @@ struct ContentView: View {
             WindowManager.shared.registerTab(windowId: windowId)
         }
         #if os(macOS)
-        .background(WindowAccessor(windowId: windowId))
+        .background(WindowAccessor(windowId: windowId, title: tabTitle))
         #endif
     }
 
@@ -139,11 +152,12 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Window Accessor (for native tab support)
+// MARK: - Window Accessor (for native tab support and title)
 
 #if os(macOS)
 struct WindowAccessor: NSViewRepresentable {
     let windowId: UUID
+    let title: String
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
@@ -151,12 +165,21 @@ struct WindowAccessor: NSViewRepresentable {
             if let window = view.window {
                 // Enable automatic tabbing
                 window.tabbingMode = .automatic
+                // Set initial title
+                window.title = title
             }
         }
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // Update window title when it changes
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                window.title = title
+            }
+        }
+    }
 }
 #endif
 
