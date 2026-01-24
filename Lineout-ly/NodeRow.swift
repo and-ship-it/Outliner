@@ -185,6 +185,7 @@ struct NodeRow: View {
                     // Only allow editing if not locked
                     if !isLockedByOtherWindow {
                         node.title = newValue
+                        document.contentDidChange()  // Trigger auto-save
                     }
                 }
             ),
@@ -220,6 +221,7 @@ struct NodeRow: View {
                 set: { newValue in
                     if !isLockedByOtherWindow {
                         node.title = newValue
+                        document.contentDidChange()  // Trigger auto-save
                     }
                 }
             ),
