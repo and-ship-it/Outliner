@@ -30,7 +30,36 @@ final class WindowManager {
     /// Pending zoom for next window (set before opening new tab)
     var pendingZoom: UUID?
 
+    /// Track active tabs and their zoom states
+    private var tabZoomStates: [UUID: UUID?] = [:]  // windowId -> zoomedNodeId
+
     private init() {}
+
+    // MARK: - Tab Tracking
+
+    /// Register a tab when it appears
+    func registerTab(windowId: UUID) {
+        if tabZoomStates[windowId] == nil {
+            tabZoomStates[windowId] = nil
+        }
+    }
+
+    /// Update a tab's zoom state
+    func registerTabZoom(windowId: UUID, zoomedNodeId: UUID?) {
+        tabZoomStates[windowId] = zoomedNodeId
+    }
+
+    /// Remove a tab when it closes
+    func unregisterTab(windowId: UUID) {
+        tabZoomStates.removeValue(forKey: windowId)
+    }
+
+    /// Get all current tab states for session saving
+    func getCurrentTabStates() -> [SessionManager.TabState] {
+        return tabZoomStates.map { (_, zoomId) in
+            SessionManager.TabState(zoomedNodeId: zoomId?.uuidString)
+        }
+    }
 
     // MARK: - Document Loading
 
@@ -59,6 +88,9 @@ final class WindowManager {
             doc.autoSaveEnabled = true
             self.document = doc
             print("[WindowManager] Document loaded, nodes: \(doc.root.children.count)")
+
+            // Restore previous session if enabled
+            SessionManager.shared.restoreSessionIfNeeded(document: doc)
 
         } catch {
             print("[WindowManager] Load error: \(error)")

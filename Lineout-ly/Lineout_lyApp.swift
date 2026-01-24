@@ -161,6 +161,13 @@ struct OutlineCommands: Commands {
                 set: { focusModeBinding?.wrappedValue = $0 }
             ))
             .keyboardShortcut("f", modifiers: [.command, .shift])
+
+            Divider()
+
+            Toggle("Restore Previous Session on Launch", isOn: Binding(
+                get: { SessionManager.shared.restorePreviousSession },
+                set: { SessionManager.shared.restorePreviousSession = $0 }
+            ))
         }
 
         // Outline menu
@@ -386,6 +393,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
         }
         return true
+    }
+
+    /// Save session state before app terminates
+    func applicationWillTerminate(_ notification: Notification) {
+        Task { @MainActor in
+            SessionManager.shared.saveCurrentSession()
+        }
     }
 }
 #endif

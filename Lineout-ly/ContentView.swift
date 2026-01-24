@@ -66,6 +66,14 @@ struct ContentView: View {
             // Release all locks when window closes
             WindowManager.shared.releaseAllLocks(for: windowId)
         }
+        .onChange(of: zoomedNodeIdString) { _, newValue in
+            // Track zoom changes for session save
+            WindowManager.shared.registerTabZoom(windowId: windowId, zoomedNodeId: UUID(uuidString: newValue))
+        }
+        .onAppear {
+            // Register this tab with WindowManager
+            WindowManager.shared.registerTab(windowId: windowId)
+        }
         #if os(macOS)
         .background(WindowAccessor(windowId: windowId))
         #endif
