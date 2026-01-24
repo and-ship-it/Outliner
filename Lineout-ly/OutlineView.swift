@@ -193,10 +193,7 @@ struct OutlineView: View {
                 .onChange(of: searchQuery) { _, newValue in
                     searchResults = document.search(query: newValue)
                     selectedResultIndex = 0
-                    // Auto-navigate to first result
-                    if let first = searchResults.first {
-                        document.navigateToSearchResult(first)
-                    }
+                    // Don't auto-navigate - wait for Enter or navigation button
                 }
                 .onAppear {
                     // Focus the search field when it appears
