@@ -68,7 +68,8 @@ struct OutlineView: View {
                                 zoomedNodeId: $zoomedNodeId,
                                 fontSize: $fontSize,
                                 isFocusMode: $isFocusMode,
-                                isSearching: $isSearching
+                                isSearching: $isSearching,
+                                searchQuery: searchQuery
                             )
                             .id(item.node.id)
                         }

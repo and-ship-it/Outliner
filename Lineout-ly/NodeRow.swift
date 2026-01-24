@@ -20,6 +20,7 @@ struct NodeRow: View {
     @Binding var fontSize: Double
     @Binding var isFocusMode: Bool  // Whether focus mode is enabled
     @Binding var isSearching: Bool  // Whether search bar is visible
+    var searchQuery: String = ""  // Current search query for highlighting
 
     // Base sizes (at default font size 13.0)
     private let baseFontSize: CGFloat = 13.0
@@ -176,6 +177,7 @@ struct NodeRow: View {
             isTaskCompleted: node.isTask && node.isTaskCompleted,
             hasNextNode: hasNextNode,
             placeholder: isOnlyNode && node.title.isEmpty ? placeholderText : nil,
+            searchQuery: searchQuery,
             onFocusChange: { focused in
                 if focused && !isNodeFocused {
                     tryFocusNode()

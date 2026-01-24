@@ -68,6 +68,7 @@ struct OutlineTextField: NSViewRepresentable {
     var isTaskCompleted: Bool = false  // Whether this is a completed task (strikethrough + grey)
     var hasNextNode: Bool = true  // Whether there's a next node to navigate to
     var placeholder: String? = nil  // Placeholder text shown when empty
+    var searchQuery: String = ""  // Current search query for highlighting matches
     var onFocusChange: (Bool) -> Void
     var onAction: ((OutlineAction) -> Void)?
     var onSplitLine: ((String) -> Void)?  // Called when splitting line, passes text after cursor
@@ -160,7 +161,7 @@ struct OutlineTextField: NSViewRepresentable {
         textField.isEditable = !isLocked
         textField.isSelectable = !isLocked
 
-        // Update text color and strikethrough for completed tasks
+        // Update text color, strikethrough, and search highlighting
         if isTaskCompleted {
             textField.textColor = NSColor.secondaryLabelColor
             // Apply strikethrough using attributed string
@@ -171,18 +172,41 @@ struct OutlineTextField: NSViewRepresentable {
                 .font: weightedFont
             ]
             textField.attributedStringValue = NSAttributedString(string: text, attributes: attributes)
+        } else if !searchQuery.isEmpty {
+            // Apply search highlighting
+            textField.textColor = NSColor.labelColor
+            let attributedString = NSMutableAttributedString(string: text, attributes: [
+                .foregroundColor: NSColor.labelColor,
+                .font: weightedFont
+            ])
+
+            // Find and highlight all occurrences of the search query (case-insensitive)
+            let lowercasedText = text.lowercased()
+            let lowercasedQuery = searchQuery.lowercased()
+            var searchRange = lowercasedText.startIndex..<lowercasedText.endIndex
+
+            while let range = lowercasedText.range(of: lowercasedQuery, range: searchRange) {
+                let nsRange = NSRange(range, in: text)
+                attributedString.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.5), range: nsRange)
+                searchRange = range.upperBound..<lowercasedText.endIndex
+            }
+
+            textField.attributedStringValue = attributedString
         } else {
             textField.textColor = NSColor.labelColor
-            // Remove strikethrough by setting plain string
+            // Remove strikethrough/highlighting by setting plain string
             if textField.attributedStringValue.string == text {
-                // Check if it has strikethrough and remove it
+                // Check if it has strikethrough or highlighting and remove it
                 let range = NSRange(location: 0, length: textField.attributedStringValue.length)
                 if range.length > 0 {
-                    var hasStrikethrough = false
+                    var hasFormatting = false
                     textField.attributedStringValue.enumerateAttribute(.strikethroughStyle, in: range) { value, _, _ in
-                        if value != nil { hasStrikethrough = true }
+                        if value != nil { hasFormatting = true }
                     }
-                    if hasStrikethrough {
+                    textField.attributedStringValue.enumerateAttribute(.backgroundColor, in: range) { value, _, _ in
+                        if value != nil { hasFormatting = true }
+                    }
+                    if hasFormatting {
                         textField.stringValue = text
                     }
                 }
