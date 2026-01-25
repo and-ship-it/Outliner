@@ -19,6 +19,13 @@ final class OutlineDocument {
     /// Currently focused/selected node
     var focusedNodeId: UUID?
 
+    /// When true, cursor should be positioned at end of text when focus changes
+    /// Used for merge-up behavior (backspace on empty bullet)
+    var cursorAtEndOnNextFocus: Bool = false
+
+    /// Increments to force a focus refresh even when focusedNodeId hasn't changed
+    var focusVersion: Int = 0
+
     /// Current zoom root (nil = document root, showing all top-level items)
     var zoomedNodeId: UUID?
 
@@ -126,11 +133,13 @@ final class OutlineDocument {
     // MARK: - Focus Operations
 
     func setFocus(_ node: OutlineNode?) {
+        print("[DEBUG] OutlineDocument.setFocus: node='\(node?.title.prefix(20) ?? "nil")' (id: \(node?.id.uuidString.prefix(8) ?? "nil")), current focusedNodeId=\(focusedNodeId?.uuidString.prefix(8) ?? "nil")")
         // Clear multi-selection when changing focus
         if node?.id != focusedNodeId {
             clearSelection()
         }
         focusedNodeId = node?.id
+        print("[DEBUG] OutlineDocument.setFocus: DONE - focusedNodeId is now \(focusedNodeId?.uuidString.prefix(8) ?? "nil")")
     }
 
     func moveFocusUp() {
@@ -245,6 +254,80 @@ final class OutlineDocument {
         }
 
         return highestNode
+    }
+
+    /// Select focused row and extend selection down (Shift+Down)
+    func selectRowDown() {
+        print("[DEBUG] selectRowDown: CALLED, selectedNodeIds.count=\(selectedNodeIds.count), focusedNodeId=\(focusedNodeId?.uuidString.prefix(8) ?? "nil")")
+        let visible = visibleNodes
+        guard !visible.isEmpty else {
+            print("[DEBUG] selectRowDown: no visible nodes, returning")
+            return
+        }
+
+        if selectedNodeIds.isEmpty {
+            // First press: select the focused node
+            if let focusedId = focusedNodeId {
+                print("[DEBUG] selectRowDown: first press, selecting focused node")
+                selectedNodeIds.insert(focusedId)
+            }
+        } else {
+            // Find the lowest selected node and select the next one
+            var lowestIndex = -1
+            for (index, node) in visible.enumerated() {
+                if selectedNodeIds.contains(node.id) {
+                    lowestIndex = max(lowestIndex, index)
+                }
+            }
+            print("[DEBUG] selectRowDown: lowestIndex=\(lowestIndex), visible.count=\(visible.count)")
+
+            // Select the next node if there is one
+            if lowestIndex >= 0 && lowestIndex < visible.count - 1 {
+                let nextNode = visible[lowestIndex + 1]
+                print("[DEBUG] selectRowDown: extending to next node '\(nextNode.title.prefix(20))'")
+                selectedNodeIds.insert(nextNode.id)
+            } else {
+                print("[DEBUG] selectRowDown: cannot extend further")
+            }
+        }
+        print("[DEBUG] selectRowDown: DONE, selectedNodeIds.count=\(selectedNodeIds.count)")
+    }
+
+    /// Select focused row and extend selection up (Shift+Up)
+    func selectRowUp() {
+        print("[DEBUG] selectRowUp: CALLED, selectedNodeIds.count=\(selectedNodeIds.count), focusedNodeId=\(focusedNodeId?.uuidString.prefix(8) ?? "nil")")
+        let visible = visibleNodes
+        guard !visible.isEmpty else {
+            print("[DEBUG] selectRowUp: no visible nodes, returning")
+            return
+        }
+
+        if selectedNodeIds.isEmpty {
+            // First press: select the focused node
+            if let focusedId = focusedNodeId {
+                print("[DEBUG] selectRowUp: first press, selecting focused node")
+                selectedNodeIds.insert(focusedId)
+            }
+        } else {
+            // Find the highest selected node and select the previous one
+            var highestIndex = Int.max
+            for (index, node) in visible.enumerated() {
+                if selectedNodeIds.contains(node.id) {
+                    highestIndex = min(highestIndex, index)
+                }
+            }
+            print("[DEBUG] selectRowUp: highestIndex=\(highestIndex), visible.count=\(visible.count)")
+
+            // Select the previous node if there is one
+            if highestIndex > 0 && highestIndex < Int.max {
+                let prevNode = visible[highestIndex - 1]
+                print("[DEBUG] selectRowUp: extending to prev node '\(prevNode.title.prefix(20))'")
+                selectedNodeIds.insert(prevNode.id)
+            } else {
+                print("[DEBUG] selectRowUp: cannot extend further")
+            }
+        }
+        print("[DEBUG] selectRowUp: DONE, selectedNodeIds.count=\(selectedNodeIds.count)")
     }
 
     // MARK: - Collapse/Expand
@@ -467,12 +550,18 @@ final class OutlineDocument {
 
         // Check if this is the last node - if so, just clear it instead of deleting
         let visible = visibleNodes
+        print("[DEBUG] deleteFocused: visible.count=\(visible.count), focused='\(focused.title.prefix(20))'")
         if visible.count == 1 && focused == visible.first {
             // Last node - clear its content but keep it (with undo)
+            print("[DEBUG] deleteFocused: LAST NODE CASE - clearing instead of deleting")
             let oldTitle = focused.title
             let oldBody = focused.body
             focused.title = ""
             focused.body = ""
+
+            // Force focus refresh by incrementing focusVersion
+            print("[DEBUG] deleteFocused: incrementing focusVersion from \(focusVersion) to \(focusVersion + 1)")
+            focusVersion += 1
 
             undoManager.registerUndo(withTarget: self) { doc in
                 if let node = doc.root.find(id: focused.id) {
@@ -495,12 +584,14 @@ final class OutlineDocument {
         // Move to trash before deleting
         TrashBin.shared.trash(focused)
 
-        // Find next node to focus
+        // Find previous node to focus (merge up behavior for backspace)
+        // Set flag to position cursor at end of text (merge up)
         if let index = visible.firstIndex(of: focused) {
-            if index < visible.count - 1 {
-                focusedNodeId = visible[index + 1].id
-            } else if index > 0 {
+            if index > 0 {
+                cursorAtEndOnNextFocus = true  // Position cursor at end for merge-up
                 focusedNodeId = visible[index - 1].id
+            } else if index < visible.count - 1 {
+                focusedNodeId = visible[index + 1].id
             } else {
                 focusedNodeId = nil
             }
@@ -526,8 +617,10 @@ final class OutlineDocument {
 
         // Check if this is the last top-level node - if so, just clear it instead of deleting
         let visible = visibleNodes
+        print("[DEBUG] deleteFocusedWithChildren: visible.count=\(visible.count), focused='\(focused.title.prefix(20))'")
         if visible.count == 1 && focused == visible.first {
             // Last node - clear its content and children but keep it (with undo)
+            print("[DEBUG] deleteFocusedWithChildren: LAST NODE CASE - clearing instead of deleting")
             let oldTitle = focused.title
             let oldBody = focused.body
             let oldChildren = focused.children.map { $0.deepCopy() }
@@ -535,6 +628,10 @@ final class OutlineDocument {
             focused.title = ""
             focused.body = ""
             focused.children.removeAll()
+
+            // Force focus refresh by incrementing focusVersion
+            print("[DEBUG] deleteFocusedWithChildren: incrementing focusVersion from \(focusVersion) to \(focusVersion + 1)")
+            focusVersion += 1
 
             undoManager.registerUndo(withTarget: self) { doc in
                 if let node = doc.root.find(id: focused.id) {

@@ -131,7 +131,7 @@ struct OutlineCommands: Commands {
             Divider()
 
             Button("Find...") {
-                searchingBinding?.wrappedValue = true
+                searchingBinding?.wrappedValue.toggle()
             }
             .keyboardShortcut("f", modifiers: .command)
             .disabled(document == nil)

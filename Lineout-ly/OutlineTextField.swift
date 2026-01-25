@@ -26,11 +26,13 @@ enum OutlineAction {
     case zoomIn
     case zoomOut
     case zoomToRoot
-    case progressiveSelectDown
+    case selectRowDown    // Shift+Down: select current row, then extend down
+    case selectRowUp      // Shift+Up: select current row, then extend up
     case progressiveSelectAll  // Cmd+A progressive selection
     case clearSelection        // Escape to clear selection
     case deleteWithChildren
     case deleteSelected        // Delete all selected nodes (Cmd+Shift+Backspace with selection)
+    case deleteEmpty           // Delete empty bullet on backspace (merge with previous)
     case toggleTask
     case toggleFocusMode
     case goHomeAndCollapseAll
@@ -92,6 +94,11 @@ struct OutlineTextField: NSViewRepresentable {
     var placeholder: String? = nil  // Placeholder text shown when empty
     var searchQuery: String = ""  // Current search query for highlighting matches
     var hasSelection: Bool = false  // Whether there's a multi-node selection active
+    var nodeId: UUID  // The ID of the node this text field represents (for view recycling safety)
+    var nodeTitle: String = ""  // For debugging
+    var cursorAtEnd: Bool = false  // Position cursor at end when focusing (for merge-up)
+    var focusVersion: Int = 0  // Increments to force focus refresh even when focusedNodeId unchanged
+    var onCursorPositioned: (() -> Void)? = nil  // Called after cursor is positioned (to reset flag)
     var onFocusChange: (Bool) -> Void
     var onAction: ((OutlineAction) -> Void)?
     var onSplitLine: ((String) -> Void)?  // Called when splitting line, passes text after cursor
@@ -185,15 +192,33 @@ struct OutlineTextField: NSViewRepresentable {
             // Update multi-selection state
             outlineTextField.hasMultiSelection = self.hasSelection
 
+            // Store the current node ID on the text field (critical for view recycling)
+            let expectedNodeId = self.nodeId
+            let expectedNodeTitle = self.nodeTitle
+            outlineTextField.currentNodeId = expectedNodeId
+            outlineTextField.currentNodeTitle = expectedNodeTitle
+
             // Handle mouse click focus - ensure document.focusedNodeId is updated
             // But don't allow focus on locked nodes
             let currentOnFocusChange = self.onFocusChange
-            outlineTextField.onMouseDownFocus = {
-                if outlineTextField.isNodeLocked {
-                    // Don't accept focus on locked nodes - resign immediately
-                    outlineTextField.window?.makeFirstResponder(nil)
+            outlineTextField.onMouseDownFocus = { [weak outlineTextField] in
+                guard let tf = outlineTextField else { return }
+                print("[DEBUG] onMouseDownFocus: CALLED - expected node='\(expectedNodeTitle)' (id: \(expectedNodeId.uuidString.prefix(8))), current node='\(tf.currentNodeTitle)' (id: \(tf.currentNodeId?.uuidString.prefix(8) ?? "nil"))")
+
+                // CRITICAL: Check if the text field is still showing the same node
+                // If not, this callback is stale due to view recycling
+                if tf.currentNodeId != expectedNodeId {
+                    print("[DEBUG] onMouseDownFocus: STALE CALLBACK - node changed from '\(expectedNodeTitle)' to '\(tf.currentNodeTitle)', skipping")
                     return
                 }
+
+                if tf.isNodeLocked {
+                    // Don't accept focus on locked nodes - resign immediately
+                    print("[DEBUG] onMouseDownFocus: blocked - node is locked")
+                    tf.window?.makeFirstResponder(nil)
+                    return
+                }
+                print("[DEBUG] onMouseDownFocus: calling onFocusChange(true) for node '\(expectedNodeTitle)'")
                 currentOnFocusChange(true)
             }
         }
@@ -255,64 +280,55 @@ struct OutlineTextField: NSViewRepresentable {
         }
 
         // Handle focus changes from SwiftUI -> AppKit
-        // Only trigger focus if we're not already focused
-        let isCurrentlyFirstResponder = textField.window?.firstResponder == textField.currentEditor()
+        // Simple approach: ensure first responder and cursor visibility
+        let fieldEditor = textField.currentEditor()
+        let isCurrentlyFirstResponder = fieldEditor != nil &&
+            textField.window?.firstResponder === fieldEditor
 
-        if isFocused && !isCurrentlyFirstResponder && !context.coordinator.isUpdatingFocus {
-            context.coordinator.isUpdatingFocus = true
+        if isFocused {
+            // Check if focusVersion changed - forces a refocus even if already first responder
+            let needsForcedRefocus = focusVersion != context.coordinator.lastFocusVersion
+            if needsForcedRefocus {
+                print("[DEBUG] updateNSView: focusVersion changed \(context.coordinator.lastFocusVersion) -> \(focusVersion), forcing refocus")
+                context.coordinator.lastFocusVersion = focusVersion
+            }
 
-            // Try immediate focus first (works when view is already in hierarchy)
-            if let window = textField.window {
-                let didBecome = window.makeFirstResponder(textField)
+            if (!isCurrentlyFirstResponder || needsForcedRefocus) && !context.coordinator.isUpdatingFocus {
+                print("[DEBUG] updateNSView: will refocus - isCurrentlyFirstResponder=\(isCurrentlyFirstResponder), needsForcedRefocus=\(needsForcedRefocus)")
+                // Need to become first responder and start editing
+                context.coordinator.isUpdatingFocus = true
 
-                if didBecome {
-                    // Position cursor at start, no selection
-                    if let editor = textField.currentEditor() {
-                        editor.selectedRange = NSRange(location: 0, length: 0)
-                    }
-                    context.coordinator.isUpdatingFocus = false
-                } else {
-                    // If immediate focus failed, try async (view might not be fully ready)
-                    DispatchQueue.main.async {
-                        guard let window = textField.window else {
-                            context.coordinator.isUpdatingFocus = false
-                            return
-                        }
+                // Capture values for async block
+                let shouldCursorAtEnd = cursorAtEnd
+                let cursorPositionedCallback = onCursorPositioned
 
-                        let didBecomeAsync = window.makeFirstResponder(textField)
-
-                        if didBecomeAsync {
-                            // Position cursor at start, no selection
-                            if let editor = textField.currentEditor() {
-                                editor.selectedRange = NSRange(location: 0, length: 0)
-                            }
-                        }
-
-                        context.coordinator.isUpdatingFocus = false
-                    }
-                }
-            } else {
-                // No window yet, must wait
+                // Use async dispatch to ensure view is fully ready after structural changes
                 DispatchQueue.main.async {
-                    guard let window = textField.window else {
-                        context.coordinator.isUpdatingFocus = false
-                        return
-                    }
+                    // Use selectText to ensure editing session starts (creates field editor)
+                    textField.selectText(nil)
 
-                    let didBecomeAsync = window.makeFirstResponder(textField)
-
-                    if didBecomeAsync {
-                        // Position cursor at start, no selection
-                        if let editor = textField.currentEditor() {
+                    // Now set cursor position
+                    if let editor = textField.currentEditor() {
+                        if shouldCursorAtEnd {
+                            // Position at end (for merge-up after backspace delete)
+                            editor.selectedRange = NSRange(location: editor.string.count, length: 0)
+                            cursorPositionedCallback?()  // Reset the flag
+                        } else {
+                            // Position at start for keyboard navigation
                             editor.selectedRange = NSRange(location: 0, length: 0)
                         }
                     }
-
-                    context.coordinator.isUpdatingFocus = false
                 }
+
+                context.coordinator.isUpdatingFocus = false
             }
-        } else if !isFocused && isCurrentlyFirstResponder && !context.coordinator.isUpdatingFocus {
-            // If SwiftUI says we shouldn't be focused but we are, resign first responder
+
+            // ALWAYS ensure insertion point is visible when we should be focused
+            if let editor = textField.currentEditor() as? NSTextView {
+                editor.updateInsertionPointStateAndRestartTimer(true)
+            }
+        } else if isCurrentlyFirstResponder && !context.coordinator.isUpdatingFocus {
+            // Resign first responder
             context.coordinator.isUpdatingFocus = true
             textField.window?.makeFirstResponder(nil)
             context.coordinator.isUpdatingFocus = false
@@ -326,9 +342,11 @@ struct OutlineTextField: NSViewRepresentable {
     class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: OutlineTextField
         var isUpdatingFocus = false
+        var lastFocusVersion: Int = 0  // Track focus version to detect forced refreshes
 
         init(_ parent: OutlineTextField) {
             self.parent = parent
+            self.lastFocusVersion = parent.focusVersion
         }
 
         func controlTextDidChange(_ obj: Notification) {
@@ -355,12 +373,22 @@ struct OutlineTextField: NSViewRepresentable {
         }
 
         func controlTextDidBeginEditing(_ obj: Notification) {
-            guard !isUpdatingFocus else { return }
+            print("[DEBUG] controlTextDidBeginEditing: isUpdatingFocus=\(isUpdatingFocus)")
+            guard !isUpdatingFocus else {
+                print("[DEBUG] controlTextDidBeginEditing: SKIPPED (isUpdatingFocus)")
+                return
+            }
+            print("[DEBUG] controlTextDidBeginEditing: calling onFocusChange(true)")
             parent.onFocusChange(true)
         }
 
         func controlTextDidEndEditing(_ obj: Notification) {
-            guard !isUpdatingFocus else { return }
+            print("[DEBUG] controlTextDidEndEditing: isUpdatingFocus=\(isUpdatingFocus)")
+            guard !isUpdatingFocus else {
+                print("[DEBUG] controlTextDidEndEditing: SKIPPED (isUpdatingFocus)")
+                return
+            }
+            print("[DEBUG] controlTextDidEndEditing: calling onFocusChange(false)")
             parent.onFocusChange(false)
         }
 
@@ -392,10 +420,15 @@ struct OutlineTextField: NSViewRepresentable {
                 return false
 
             case #selector(NSResponder.moveDownAndModifySelection(_:)):
-                // This is Shift+Down - handle progressive selection
-                if let textField = control as? OutlineNSTextField {
-                    textField.handleProgressiveSelectDown()
-                }
+                // Shift+Down: select row and extend down
+                print("[DEBUG] doCommandBy: moveDownAndModifySelection, calling selectRowDown")
+                parent.onAction?(.selectRowDown)
+                return true
+
+            case #selector(NSResponder.moveUpAndModifySelection(_:)):
+                // Shift+Up: select row and extend up
+                print("[DEBUG] doCommandBy: moveUpAndModifySelection, calling selectRowUp")
+                parent.onAction?(.selectRowUp)
                 return true
 
             case #selector(NSResponder.insertTab(_:)):
@@ -407,6 +440,15 @@ struct OutlineTextField: NSViewRepresentable {
                 // Shift+Tab = outdent
                 parent.onAction?(.outdent)
                 return true
+
+            case #selector(NSResponder.deleteBackward(_:)):
+                // Backspace on empty bullet: delete the bullet and move to previous
+                if textView.string.isEmpty {
+                    parent.onAction?(.deleteEmpty)
+                    return true
+                }
+                // Otherwise, let default backspace behavior delete character
+                return false
 
             case #selector(NSResponder.insertNewline(_:)):
                 // Enter creates a new sibling bullet
@@ -537,15 +579,14 @@ class OutlineNSTextField: NSTextField {
     var isNodeLocked: Bool = false  // Whether this node is locked by another tab
     var hasMultiSelection: Bool = false  // Whether there's a multi-node selection active
 
-    // Progressive selection state (Shift+Down)
-    private enum SelectionLevel {
-        case none
-        case firstWord
-        case wholeLine
-        case extendToNextBullet
-    }
-    private var currentSelectionLevel: SelectionLevel = .none
-    private var lastShiftDownTime: TimeInterval = 0
+    // Store the current node ID to handle view recycling correctly
+    var currentNodeId: UUID?
+    var currentNodeTitle: String = ""  // For debugging
+
+    // STATIC flag: tracks if ANY OutlineNSTextField is receiving a mouse click
+    // This is needed because view recycling can cause a different text field instance
+    // to become first responder than the one that received the mouse click
+    private static var anyTextFieldReceivingClick = false
 
     // Progressive Cmd+A selection state
     private var cmdASelectionLevel: Int = 0  // 0 = text only, 1+ = bullet expansion
@@ -558,9 +599,6 @@ class OutlineNSTextField: NSTextField {
 
     // Custom field editor for thick cursor
     private var thickCursorEditor: ThickCursorTextView?
-
-    // Track if we're becoming first responder via mouse
-    private var isBecomingFirstResponderViaClick = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -628,115 +666,41 @@ class OutlineNSTextField: NSTextField {
     override func mouseDown(with event: NSEvent) {
         // Don't process mouse down if locked
         if isNodeLocked {
+            print("[DEBUG] mouseDown: blocked - node is locked")
             return
         }
-        // Track that we're focusing via mouse click
-        isBecomingFirstResponderViaClick = true
+
+        // CRITICAL: Call onMouseDownFocus IMMEDIATELY, BEFORE super.mouseDown
+        // This updates document.focusedNodeId before SwiftUI reacts to the click
+        // Otherwise SwiftUI will force-focus the OLD node based on stale focusedNodeId
+        print("[DEBUG] mouseDown: calling onMouseDownFocus IMMEDIATELY for node '\(currentNodeTitle)'")
+        onMouseDownFocus?()
+
+        // Now proceed with normal mouse down handling
+        print("[DEBUG] mouseDown: calling super.mouseDown for node '\(currentNodeTitle)'")
         super.mouseDown(with: event)
-        isBecomingFirstResponderViaClick = false
+        print("[DEBUG] mouseDown: super.mouseDown completed for node '\(currentNodeTitle)'")
     }
 
     override func becomeFirstResponder() -> Bool {
         // Double-check: don't become first responder if locked
         if isNodeLocked {
+            print("[DEBUG] becomeFirstResponder: blocked - node is locked")
             return false
         }
         let result = super.becomeFirstResponder()
-        if result {
-            // Notify about focus change if this came from a mouse click
-            if isBecomingFirstResponderViaClick {
-                onMouseDownFocus?()
-            }
-
-            // Position cursor at start after becoming first responder
-            DispatchQueue.main.async { [weak self] in
-                if let editor = self?.currentEditor() {
-                    editor.selectedRange = NSRange(location: 0, length: 0)
-                }
-            }
-        }
+        print("[DEBUG] becomeFirstResponder: result=\(result), node='\(currentNodeTitle)'")
+        // Note: Focus is now handled in mouseDown, not here
+        // This avoids race conditions with SwiftUI's focus management
         return result
     }
 
     override func resignFirstResponder() -> Bool {
-        // Reset selection state when losing focus
-        currentSelectionLevel = .none
         return super.resignFirstResponder()
-    }
-
-    /// Handle progressive Shift+Down selection
-    func handleProgressiveSelectDown() {
-        guard let editor = currentEditor() as? NSTextView else { return }
-
-        let currentTime = Date.timeIntervalSinceReferenceDate
-        let timeSinceLastPress = currentTime - lastShiftDownTime
-
-        // Reset if too much time has passed (more than 2 seconds)
-        if timeSinceLastPress > 2.0 {
-            currentSelectionLevel = .none
-        }
-
-        lastShiftDownTime = currentTime
-
-        let text = editor.string
-        let currentRange = editor.selectedRange()
-
-        switch currentSelectionLevel {
-        case .none:
-            // First Shift+Down: select first word
-            selectFirstWord(in: editor, text: text, currentRange: currentRange)
-            currentSelectionLevel = .firstWord
-
-        case .firstWord:
-            // Second Shift+Down: select whole line
-            selectWholeLine(in: editor, text: text)
-            currentSelectionLevel = .wholeLine
-
-        case .wholeLine:
-            // Third Shift+Down: extend to next bullet
-            // This is handled at the document level, so we notify via action
-            actionHandler?(.progressiveSelectDown)
-            currentSelectionLevel = .extendToNextBullet
-
-        case .extendToNextBullet:
-            // Continue extending to subsequent bullets
-            actionHandler?(.progressiveSelectDown)
-        }
-    }
-
-    private func selectFirstWord(in editor: NSTextView, text: String, currentRange: NSRange) {
-        // Find the first word boundary
-        var wordRange = NSRange(location: 0, length: 0)
-
-        if !text.isEmpty {
-            // Skip leading whitespace
-            var start = 0
-            while start < text.count && text[text.index(text.startIndex, offsetBy: start)].isWhitespace {
-                start += 1
-            }
-
-            // Find end of first word
-            var end = start
-            while end < text.count && !text[text.index(text.startIndex, offsetBy: end)].isWhitespace {
-                end += 1
-            }
-
-            if end > start {
-                wordRange = NSRange(location: start, length: end - start)
-            }
-        }
-
-        editor.setSelectedRange(wordRange)
-    }
-
-    private func selectWholeLine(in editor: NSTextView, text: String) {
-        // Select entire text content
-        editor.setSelectedRange(NSRange(location: 0, length: text.count))
     }
 
     /// Reset selection state (called when text changes)
     func resetSelectionState() {
-        currentSelectionLevel = .none
         cmdASelectionLevel = 0
     }
 
@@ -756,12 +720,15 @@ class OutlineNSTextField: NSTextField {
         // - Cmd+Shift+Backspace (which deletes selected)
         // - Escape (which handles clearing itself)
         // - Cmd+A (which handles selection itself)
+        // - Shift+Up/Down (which extends selection)
         if hasMultiSelection {
             let isCmdShiftBackspace = event.keyCode == 51 && hasCommand && hasShift
             let isEscape = event.keyCode == 53
             let isCmdA = event.keyCode == 0 && hasCommand && !hasShift && !hasOption
+            let isShiftUp = event.keyCode == 126 && hasShift && !hasCommand && !hasOption
+            let isShiftDown = event.keyCode == 125 && hasShift && !hasCommand && !hasOption
 
-            if !isCmdShiftBackspace && !isEscape && !isCmdA {
+            if !isCmdShiftBackspace && !isEscape && !isCmdA && !isShiftUp && !isShiftDown {
                 cmdASelectionLevel = 0
                 actionHandler?(.clearSelection)
             }
@@ -776,11 +743,17 @@ class OutlineNSTextField: NSTextField {
                 return true
             } else if hasCommand && hasShift {
                 // Cmd+Shift+Up: collapse
+                print("[DEBUG] performKeyEquivalent: Cmd+Shift+Up detected, calling collapse")
                 actionHandler?(.collapse)
                 return true
             } else if hasShift && hasOption {
                 // Shift+Option+Up: move bullet up
                 actionHandler?(.moveUp)
+                return true
+            } else if hasShift && !hasCommand && !hasOption {
+                // Shift+Up: select row and extend up
+                print("[DEBUG] performKeyEquivalent: Shift+Up detected, calling selectRowUp")
+                actionHandler?(.selectRowUp)
                 return true
             }
             // Plain Cmd+Up: let system handle (move to start of text/document)
@@ -799,8 +772,9 @@ class OutlineNSTextField: NSTextField {
                 actionHandler?(.moveDown)
                 return true
             } else if hasShift && !hasCommand && !hasOption {
-                // Shift+Down: progressive selection
-                handleProgressiveSelectDown()
+                // Shift+Down: select row and extend down
+                print("[DEBUG] performKeyEquivalent: Shift+Down detected, calling selectRowDown")
+                actionHandler?(.selectRowDown)
                 return true
             }
             // Plain Cmd+Down: let system handle (move to end of text/document)
@@ -1254,6 +1228,11 @@ class OutlineNSTextField: NSTextField {
 struct OutlineTextField: View {
     @Binding var text: String
     var isFocused: Bool
+    var nodeId: UUID = UUID()  // Not used on iOS but needed for API compatibility
+    var nodeTitle: String = ""  // Not used on iOS but needed for API compatibility
+    var cursorAtEnd: Bool = false  // Not used on iOS but needed for API compatibility
+    var focusVersion: Int = 0  // Not used on iOS but needed for API compatibility
+    var onCursorPositioned: (() -> Void)? = nil  // Not used on iOS but needed for API compatibility
     var onFocusChange: (Bool) -> Void
     var font: Font = .body
     var fontWeight: Font.Weight = .regular

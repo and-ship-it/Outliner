@@ -54,13 +54,14 @@ final class iCloudManager {
     // MARK: - Initialization
 
     private init() {
-        checkICloudAvailability()
+        // Don't block init - check iCloud availability lazily
     }
 
     // MARK: - iCloud Setup
 
     /// Check if iCloud is available and get the container URL
-    func checkICloudAvailability() {
+    /// This is async and won't block the main thread
+    func checkICloudAvailability() async {
         // Check if user is signed into iCloud
         guard FileManager.default.ubiquityIdentityToken != nil else {
             isICloudAvailable = false
@@ -69,15 +70,50 @@ final class iCloudManager {
             return
         }
 
-        // Get the container URL synchronously
-        if let url = FileManager.default.url(forUbiquityContainerIdentifier: containerIdentifier) {
-            self.containerURL = url
-            self.isICloudAvailable = true
-            print("[iCloud] Container available at: \(url.path)")
-        } else {
+        // If we already have a container URL, don't check again
+        if containerURL != nil {
+            return
+        }
+
+        // Get the container URL on a background thread with timeout
+        // The FileManager call can block indefinitely, so we use a race
+        let containerIdCopy = containerIdentifier
+
+        do {
+            let url = try await withThrowingTaskGroup(of: URL?.self) { group in
+                // Task 1: Fetch the container URL (can block)
+                group.addTask {
+                    return FileManager.default.url(forUbiquityContainerIdentifier: containerIdCopy)
+                }
+
+                // Task 2: Timeout after 5 seconds
+                group.addTask {
+                    try await Task.sleep(for: .seconds(5))
+                    throw CancellationError()
+                }
+
+                // Return first successful result
+                if let result = try await group.next() {
+                    group.cancelAll()
+                    return result
+                }
+                return nil
+            }
+
+            if let url {
+                self.containerURL = url
+                self.isICloudAvailable = true
+                print("[iCloud] Container available at: \(url.path)")
+            } else {
+                self.isICloudAvailable = false
+                self.containerURL = nil
+                print("[iCloud] Container not available for: \(containerIdentifier)")
+            }
+        } catch {
+            // Timeout or cancellation
+            print("[iCloud] Container lookup timed out - falling back to local")
             self.isICloudAvailable = false
             self.containerURL = nil
-            print("[iCloud] Container not available for: \(containerIdentifier)")
         }
     }
 
@@ -113,6 +149,9 @@ final class iCloudManager {
     func loadDocument() async throws -> OutlineDocument {
         isLoading = true
         defer { isLoading = false }
+
+        // Check iCloud availability (async, won't block)
+        await checkICloudAvailability()
 
         // Ensure setup is complete
         try await setupOnFirstLaunch()

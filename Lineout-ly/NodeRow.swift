@@ -177,20 +177,27 @@ struct NodeRow: View {
 
     /// Try to focus this node, acquiring lock if needed
     private func tryFocusNode() {
+        print("[DEBUG] tryFocusNode: CALLED for node '\(node.title.prefix(20))' (id: \(node.id))")
         // If locked by another window, don't allow focus
         if isLockedByOtherWindow {
+            print("[DEBUG] tryFocusNode: BLOCKED - locked by other window")
             return
         }
 
         let oldFocusId = document.focusedNodeId
+        print("[DEBUG] tryFocusNode: oldFocusId=\(oldFocusId?.uuidString.prefix(8) ?? "nil")")
 
         // Try to acquire lock
         if WindowManager.shared.tryLock(nodeId: node.id, for: windowId) {
+            print("[DEBUG] tryFocusNode: lock acquired, calling document.setFocus")
             // Release old lock
             if let oldId = oldFocusId, oldId != node.id {
                 WindowManager.shared.releaseLock(nodeId: oldId, for: windowId)
             }
             document.setFocus(node)
+            print("[DEBUG] tryFocusNode: document.focusedNodeId is now \(document.focusedNodeId?.uuidString.prefix(8) ?? "nil")")
+        } else {
+            print("[DEBUG] tryFocusNode: FAILED to acquire lock")
         }
     }
 
@@ -217,8 +224,19 @@ struct NodeRow: View {
             placeholder: isOnlyNode && node.title.isEmpty ? placeholderText : nil,
             searchQuery: searchQuery,
             hasSelection: !document.selectedNodeIds.isEmpty,
-            onFocusChange: { focused in
-                if focused && !isNodeFocused {
+            nodeId: node.id,
+            nodeTitle: String(node.title.prefix(20)),
+            cursorAtEnd: document.cursorAtEndOnNextFocus && isNodeFocused,
+            focusVersion: document.focusVersion,
+            onCursorPositioned: {
+                document.cursorAtEndOnNextFocus = false
+            },
+            onFocusChange: { [self] focused in
+                print("[DEBUG] onFocusChange(macOS): focused=\(focused), node='\(node.title.prefix(20))' (id: \(node.id.uuidString.prefix(8)))")
+                if focused {
+                    // Always sync document.focusedNodeId when any text field gains focus
+                    // This ensures mouse clicks update the focused node properly
+                    print("[DEBUG] onFocusChange(macOS): calling tryFocusNode()")
                     tryFocusNode()
                 }
             },
@@ -248,8 +266,14 @@ struct NodeRow: View {
                 }
             ),
             isFocused: isNodeFocused && !isLockedByOtherWindow,
-            onFocusChange: { focused in
-                if focused && !isNodeFocused {
+            nodeId: node.id,
+            nodeTitle: String(node.title.prefix(20)),
+            onFocusChange: { [self] focused in
+                print("[DEBUG] onFocusChange(iOS): focused=\(focused), node='\(node.title.prefix(20))' (id: \(node.id.uuidString.prefix(8)))")
+                if focused {
+                    // Always sync document.focusedNodeId when any text field gains focus
+                    // This ensures mouse clicks update the focused node properly
+                    print("[DEBUG] onFocusChange(iOS): calling tryFocusNode()")
                     tryFocusNode()
                 }
             },
@@ -263,16 +287,18 @@ struct NodeRow: View {
     private func handleAction(_ action: OutlineAction) {
         switch action {
         case .collapse:
-            withAnimation(.easeOut(duration: 0.15)) {
-                if let focused = document.focusedNode, focused.hasChildren {
-                    collapsedNodeIds.insert(focused.id)
-                }
+            // No animation - prevents focus/cursor issues during view hierarchy changes
+            print("[DEBUG] collapse: focusedNode='\(document.focusedNode?.title.prefix(20) ?? "nil")', hasChildren=\(document.focusedNode?.hasChildren ?? false), zoomedNodeId=\(zoomedNodeId?.uuidString.prefix(8) ?? "nil")")
+            if let focused = document.focusedNode, focused.hasChildren {
+                print("[DEBUG] collapse: inserting into collapsedNodeIds")
+                collapsedNodeIds.insert(focused.id)
+            } else {
+                print("[DEBUG] collapse: NOT collapsing - either no focus or no children")
             }
         case .expand:
-            withAnimation(.easeOut(duration: 0.15)) {
-                if let focused = document.focusedNode {
-                    collapsedNodeIds.remove(focused.id)
-                }
+            // No animation - prevents focus/cursor issues during view hierarchy changes
+            if let focused = document.focusedNode {
+                collapsedNodeIds.remove(focused.id)
             }
         case .collapseAll:
             if let focused = document.focusedNode {
@@ -292,21 +318,13 @@ struct NodeRow: View {
                 }
             }
         case .moveUp:
-            withAnimation(.easeOut(duration: 0.15)) {
-                document.moveUp()
-            }
+            document.moveUp()
         case .moveDown:
-            withAnimation(.easeOut(duration: 0.15)) {
-                document.moveDown()
-            }
+            document.moveDown()
         case .indent:
-            withAnimation(.easeOut(duration: 0.15)) {
-                document.indent()
-            }
+            document.indent()
         case .outdent:
-            withAnimation(.easeOut(duration: 0.15)) {
-                document.outdent()
-            }
+            document.outdent()
         case .createSiblingAbove:
             // If focused node is the zoomed node, create a child instead (sibling would be outside zoom)
             if node.id == zoomedNodeId {
@@ -326,52 +344,48 @@ struct NodeRow: View {
         case .navigateDown:
             document.moveFocusDown()
         case .zoomIn:
+            // No animation - prevents focus/cursor issues during view hierarchy changes
             if let focused = document.focusedNode {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    zoomedNodeId = focused.id
-                }
+                zoomedNodeId = focused.id
             }
         case .zoomOut:
+            // No animation - prevents focus/cursor issues during view hierarchy changes
             if let zoomedId = zoomedNodeId,
                let zoomed = document.root.find(id: zoomedId) {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    if let parent = zoomed.parent, !parent.isRoot {
-                        zoomedNodeId = parent.id
-                    } else {
-                        zoomedNodeId = nil
-                    }
+                if let parent = zoomed.parent, !parent.isRoot {
+                    zoomedNodeId = parent.id
+                } else {
+                    zoomedNodeId = nil
                 }
             }
         case .zoomToRoot:
-            withAnimation(.easeOut(duration: 0.2)) {
-                zoomedNodeId = nil
-            }
-        case .progressiveSelectDown:
-            break
+            // No animation - prevents focus/cursor issues
+            zoomedNodeId = nil
+        case .selectRowDown:
+            document.selectRowDown()
+        case .selectRowUp:
+            document.selectRowUp()
         case .progressiveSelectAll:
             document.expandSelectionProgressively()
         case .clearSelection:
             document.clearSelection()
         case .deleteWithChildren:
-            withAnimation(.easeOut(duration: 0.15)) {
-                document.deleteFocusedWithChildren()
-            }
+            document.deleteFocusedWithChildren()
         case .deleteSelected:
-            withAnimation(.easeOut(duration: 0.15)) {
-                document.deleteSelected()
-            }
+            document.deleteSelected()
+        case .deleteEmpty:
+            document.deleteFocused()
         case .toggleTask:
             node.toggleTask()
         case .toggleFocusMode:
             isFocusMode.toggle()
         case .goHomeAndCollapseAll:
-            withAnimation(.easeOut(duration: 0.2)) {
-                zoomedNodeId = nil
-                // Collapse all nodes with children in per-tab state
-                for node in document.root.flattened() {
-                    if node.hasChildren {
-                        collapsedNodeIds.insert(node.id)
-                    }
+            // No animation - prevents focus/cursor issues
+            zoomedNodeId = nil
+            // Collapse all nodes with children in per-tab state
+            for node in document.root.flattened() {
+                if node.hasChildren {
+                    collapsedNodeIds.insert(node.id)
                 }
             }
         case .toggleSearch:

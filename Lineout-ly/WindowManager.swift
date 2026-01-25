@@ -281,7 +281,7 @@ final class WindowManager {
             let icloud = iCloudManager.shared
 
             // Re-check iCloud availability
-            icloud.checkICloudAvailability()
+            await icloud.checkICloudAvailability()
 
             var doc: OutlineDocument
 

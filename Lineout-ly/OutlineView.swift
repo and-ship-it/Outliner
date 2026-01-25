@@ -150,12 +150,15 @@ struct OutlineView: View {
         if let zoomed = zoomedNode {
             result.append((node: zoomed, depth: 0, treeLines: []))
 
-            // Then add its visible children with depth starting at 1
-            let children = flattenedVisible(from: zoomed)
-            for child in children {
-                let effectiveDepth = child.depth - zoomed.depth
-                let treeLines = calculateTreeLines(for: child, zoomDepth: zoomed.depth)
-                result.append((node: child, depth: effectiveDepth, treeLines: treeLines))
+            // Only show children if the zoomed node is not collapsed
+            if !collapsedNodeIds.contains(zoomed.id) {
+                // Then add its visible children with depth starting at 1
+                let children = flattenedVisible(from: zoomed)
+                for child in children {
+                    let effectiveDepth = child.depth - zoomed.depth
+                    let treeLines = calculateTreeLines(for: child, zoomDepth: zoomed.depth)
+                    result.append((node: child, depth: effectiveDepth, treeLines: treeLines))
+                }
             }
         } else {
             // Not zoomed - show all visible nodes from root
@@ -202,7 +205,7 @@ struct OutlineView: View {
                     // Navigate to next result on Enter
                     if !searchResults.isEmpty {
                         let index = selectedResultIndex % searchResults.count
-                        document.navigateToSearchResult(searchResults[index])
+                        navigateToSearchResult(searchResults[index])
                         selectedResultIndex += 1
                     }
                 }
@@ -264,13 +267,25 @@ struct OutlineView: View {
     private func navigateToNextResult() {
         guard !searchResults.isEmpty else { return }
         selectedResultIndex = (selectedResultIndex + 1) % searchResults.count
-        document.navigateToSearchResult(searchResults[selectedResultIndex])
+        navigateToSearchResult(searchResults[selectedResultIndex])
     }
 
     private func navigateToPreviousResult() {
         guard !searchResults.isEmpty else { return }
         selectedResultIndex = selectedResultIndex > 0 ? selectedResultIndex - 1 : searchResults.count - 1
-        document.navigateToSearchResult(searchResults[selectedResultIndex])
+        navigateToSearchResult(searchResults[selectedResultIndex])
+    }
+
+    /// Navigate to a search result - expands ancestors in per-tab collapse state
+    private func navigateToSearchResult(_ node: OutlineNode) {
+        // Expand all ancestors in per-tab collapse state to make the node visible
+        var current = node.parent
+        while let parent = current {
+            collapsedNodeIds.remove(parent.id)
+            current = parent.parent
+        }
+        // Focus the node
+        document.focusedNodeId = node.id
     }
 
     private func closeSearch() {
