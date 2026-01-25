@@ -1,6 +1,75 @@
 # Lineout-ly
 
-A minimalist outliner app for macOS with iCloud sync, inspired by WorkFlowy and Roam Research.
+A fast, keyboard-first outliner for organizing thoughts. macOS and iOS with iCloud sync.
+
+---
+
+## Product Vision
+
+### What This Is
+
+**A thinking space, not a storage system.**
+
+Lineout-ly is for people who already have a "second brain" (Obsidian, Notion, Apple Notes) and manage tasks in Reminders/Calendar. They need a **fast scratchpad** where they can:
+- Quickly organize thoughts
+- Plan and adjust on the fly
+- Restructure without fear
+- Navigate with keyboard OR touch
+
+### Core Philosophy
+
+| Principle | Meaning |
+|-----------|---------|
+| **Speed of reorganization** | Not typing speed - restructuring speed. Hands stay on keyboard, thoughts flow into structure. |
+| **Not scared to disassemble** | Restructuring feels safe and instant. Tear it apart, rebuild it, undo if wrong. |
+| **Thinking tool, not archive** | Thoughts form here, then graduate to permanent home. Weekly reset keeps it fresh. |
+| **Dual-mode excellence** | Keyboard-first on Mac/iPad. Touch-first excellence on iOS. Same mental model. |
+
+### What Makes It Different
+
+| Other Outliners | Lineout-ly |
+|-----------------|------------|
+| Accumulate forever | Weekly reset |
+| "Where does this go?" | Everything starts here |
+| Mouse-heavy reorganization | Keyboard-driven |
+| Touch is afterthought | Touch is first-class |
+| Rich text complexity | Markdown simplicity |
+
+### Target User
+
+Someone who:
+- Has iPad with Magic Keyboard and wants desktop-class navigation
+- Uses iPhone and wants Craft.do-level touch fluidity
+- Already has Obsidian/Notion for long-term storage
+- Needs a place to think, not a place to file
+
+---
+
+## Future Roadmap
+
+### Planned Features
+
+| Feature | Description | Priority |
+|---------|-------------|----------|
+| **Weekly reset** | New week = fresh outline. Old week syncs to Notes/Obsidian | High |
+| **Auto-zoom on launch** | Creates new bullet, zooms into it. Fresh start every time. | High |
+| **iOS touch gestures** | Swipe indent/outdent, drag reorder, tap to focus | High |
+| **Hide breadcrumbs option** | Cleaner UI, just back/home buttons | Medium |
+| **Calendar integration** | Drag bullet to day → calendar event | Medium |
+| **Reminders integration** | Drag bullet → reminder | Medium |
+| **Export to Obsidian** | Weekly archive syncs to vault | Medium |
+
+### iOS Touch Gestures (To Build)
+
+| Gesture | Action |
+|---------|--------|
+| Tap bullet | Focus |
+| Swipe right | Indent |
+| Swipe left | Outdent |
+| Long-press drag | Reorder |
+| Pinch (maybe) | Zoom in/out |
+
+---
 
 ## Architecture
 
@@ -88,9 +157,11 @@ Saved to `session.json` on app quit, restored on launch:
 |--------|----------|
 | Select all text in bullet | **Cmd+A** (first press) |
 | Expand selection to siblings | **Cmd+A** (subsequent presses) |
-| Progressive select down | **Shift+↓** |
+| Select row below | **Shift+↓** |
+| Select row above | **Shift+↑** |
 | Clear selection | **Escape** |
 | Delete all selected | **Cmd+Shift+Backspace** (with selection) |
+| Delete empty bullet (merge up) | **Backspace** (when bullet is empty) |
 
 ### View
 | Action | Shortcut |
@@ -100,7 +171,7 @@ Saved to `session.json` on app quit, restored on launch:
 | Reset font size | **Cmd+0** |
 | Toggle focus mode | **Cmd+Shift+F** |
 | Toggle always on top | **Cmd+Option+T** |
-| Find/Search | **Cmd+F** |
+| Toggle search | **Cmd+F** (press again to close) |
 
 ### Tabs & Windows
 | Action | Shortcut |
@@ -307,11 +378,12 @@ Home view:                 Zoomed into "Project A":
 └─────────────────────────────────┘
 ```
 
-- **Cmd+F** - Open search bar
-- **Enter** - Jump to next result
+- **Cmd+F** - Toggle search bar (open/close)
+- **Enter** - Jump to next result (expands collapsed ancestors)
 - **▲/▼ buttons** - Navigate between results
 - **Escape** - Close search
 - Matches highlighted in yellow
+- Search finds nodes inside collapsed parents and reveals them
 
 ### Selection Navigation
 ```
@@ -332,9 +404,10 @@ Press 3: Select siblings    Press 4: Expand to parent
 ```
 
 - **Cmd+A** - Progressive selection (text → bullet → siblings → parent)
-- **Shift+↓** - Progressive select (word → line → next bullet)
+- **Shift+↓** - Select current row + next row
+- **Shift+↑** - Select current row + previous row
 - **Escape** - Clear selection
-- **Any key** - Cancels selection (except Cmd+Shift+Backspace)
+- **Any key** - Cancels selection (except Cmd+Shift+Backspace, Shift+↑/↓)
 
 ### Navigation Flow Summary
 ```
@@ -386,3 +459,235 @@ Press 3: Select siblings    Press 4: Expand to parent
 - `OutlineDocument.undoManager` tracks all structural changes
 - Each mutation registers inverse operation
 - Menu commands use `FocusedValue` to access undo manager
+
+---
+
+## Technical Decisions & Bug Fixes
+
+### Focus Management (Critical)
+
+**Problem**: Mouse clicks and keyboard navigation had separate focus paths, causing desync between visual focus and document state.
+
+**Solution**: Unified focus through `tryFocusNode()` in NodeRow.swift
+- `onMouseDownFocus` callback fires immediately on mouseDown (not after)
+- `controlTextDidBeginEditing` also calls `tryFocusNode()` for keyboard focus
+- Both paths converge to `document.setFocus(node)`
+
+**Key files**:
+- `OutlineTextField.swift:170-200` - onMouseDownFocus handling
+- `NodeRow.swift:179-202` - tryFocusNode() implementation
+- `OutlineDocument.swift:135-143` - setFocus()
+
+### Backspace on Empty Bullet (Merge Up)
+
+**Behavior**: Pressing backspace on empty bullet deletes it and moves focus to previous bullet with cursor at END of line.
+
+**Implementation**:
+- `deleteEmpty` action in OutlineAction enum
+- `deleteFocused()` in OutlineDocument finds previous visible node
+- `cursorAtEndOnNextFocus` flag tells OutlineTextField to position cursor at end
+- `focusVersion` counter forces SwiftUI to re-render even when focusedNodeId doesn't change
+
+**Key code**:
+```swift
+// OutlineDocument.swift
+var cursorAtEndOnNextFocus: Bool = false
+var focusVersion: Int = 0
+
+func deleteFocused() {
+    // ... find previous node ...
+    cursorAtEndOnNextFocus = true
+    focusVersion += 1
+    focusedNodeId = previousNode.id
+}
+```
+
+### Shift+Up/Down Row Selection
+
+**Behavior**: Holding Shift+Up/Down selects whole rows progressively.
+
+**Problem**: Selection was being cleared on every keystroke because Shift+Up/Down wasn't in the exception list.
+
+**Solution**: Added `isShiftUp` and `isShiftDown` to the selection-clearing exception list in `performKeyEquivalent`:
+```swift
+let isShiftUp = event.keyCode == 126 && hasShift && !hasCommand && !hasOption
+let isShiftDown = event.keyCode == 125 && hasShift && !hasCommand && !hasOption
+
+if !isCmdShiftBackspace && !isEscape && !isCmdA && !isShiftUp && !isShiftDown {
+    actionHandler?(.clearSelection)
+}
+```
+
+### Collapse Zoomed Node
+
+**Problem**: When zoomed into a node, collapsing the top (zoomed) node didn't hide its children.
+
+**Cause**: `nodesWithDepth` in OutlineView.swift always showed children of zoomed node regardless of collapse state.
+
+**Solution**: Check if zoomed node is in `collapsedNodeIds` before showing children:
+```swift
+if let zoomed = zoomedNode {
+    result.append((node: zoomed, depth: 0, treeLines: []))
+    if !collapsedNodeIds.contains(zoomed.id) {  // Added this check
+        let children = flattenedVisible(from: zoomed)
+        // ...
+    }
+}
+```
+
+### Search Navigation with Per-Tab Collapse
+
+**Problem**: Search found nodes inside collapsed parents, but navigating to them didn't reveal them.
+
+**Cause**: Original `navigateToSearchResult` expanded nodes using node's own `isCollapsed` property, but collapse state is now per-tab in `collapsedNodeIds`.
+
+**Solution**: Created local `navigateToSearchResult` in OutlineView.swift that removes ancestors from `collapsedNodeIds`:
+```swift
+private func navigateToSearchResult(_ node: OutlineNode) {
+    var current = node.parent
+    while let parent = current {
+        collapsedNodeIds.remove(parent.id)
+        current = parent.parent
+    }
+    document.focusedNodeId = node.id
+}
+```
+
+### Cmd+F Toggle Search
+
+**Problem**: Cmd+F only opened search, didn't close it.
+
+**Solution**: Changed menu command from `= true` to `.toggle()`:
+```swift
+Button("Find...") {
+    searchingBinding?.wrappedValue.toggle()
+}
+```
+
+---
+
+## Debug Logging
+
+Extensive debug logging is intentionally left in place for development. Key debug points:
+
+| Location | What it logs |
+|----------|--------------|
+| `tryFocusNode()` | Focus acquisition, lock status |
+| `setFocus()` | Document focus changes |
+| `onFocusChange()` | NSTextField focus events |
+| `controlTextDidBeginEditing` | Text field activation |
+| `controlTextDidEndEditing` | Text field deactivation |
+| `performKeyEquivalent` | Keyboard shortcut detection |
+| `collapse/expand` | Collapse state changes |
+
+To find debug output: `[DEBUG]` prefix in console.
+
+---
+
+## Code Architecture
+
+### Data Flow
+
+```
+User Input (keyboard/mouse)
+    ↓
+OutlineTextField (NSViewRepresentable)
+    ↓
+OutlineAction enum (e.g., .indent, .moveUp)
+    ↓
+NodeRow.handleAction(_:)
+    ↓
+OutlineDocument methods (e.g., indent(), moveUp())
+    ↓
+structureDidChange() → structureVersion += 1
+    ↓
+SwiftUI re-renders
+    ↓
+iCloudManager.scheduleAutoSave()
+```
+
+### Per-Tab State Flow
+
+```
+ContentView (@State)
+    ↓
+Bindings passed to OutlineView
+    ↓
+Bindings passed to NodeRow
+    ↓
+Changes flow back up via @Binding
+    ↓
+WindowManager stores for session persistence
+    ↓
+SessionManager saves to session.json
+```
+
+### Key Bindings Pattern
+
+All keyboard shortcuts flow through `performKeyEquivalent(with:)` in OutlineTextField.swift:
+1. Check modifiers (Cmd, Shift, Option, Control)
+2. Check keyCode
+3. Call `actionHandler?(.someAction)`
+4. Return `true` to consume the event
+
+### Node Locking Pattern
+
+Prevents concurrent editing across windows/tabs:
+1. `WindowManager.tryLock(nodeId:for:)` attempts to acquire
+2. If locked by another window, returns false
+3. If unlocked or owned by same window, returns true and stores lock
+4. `releaseLock(nodeId:for:)` releases when focus moves away
+
+---
+
+## File Structure
+
+```
+Lineout-ly/
+├── Lineout_lyApp.swift      # App entry, menu commands
+├── ContentView.swift        # Root view, tab management
+├── OutlineView.swift        # Main outline display
+├── NodeRow.swift            # Single bullet row
+├── OutlineTextField.swift   # Custom NSTextField (keyboard handling)
+├── BulletView.swift         # Bullet/chevron indicator
+├── OutlineDocument.swift    # Document model
+├── OutlineNode.swift        # Tree node model
+├── WindowManager.swift      # Cross-window state
+├── SessionManager.swift     # Session persistence
+├── iCloudManager.swift      # iCloud file operations
+└── TrashBin.swift           # Deleted nodes storage
+```
+
+---
+
+## Common Tasks
+
+### Add a New Keyboard Shortcut
+
+1. Add case to `OutlineAction` enum in `OutlineTextField.swift`
+2. Add key detection in `performKeyEquivalent(with:)`
+3. Add handler in `NodeRow.handleAction(_:)`
+4. (Optional) Add menu item in `Lineout_lyApp.swift`
+
+### Add a New Per-Tab Setting
+
+1. Add `@State` in `ContentView.swift`
+2. Pass as `@Binding` through `OutlineView` → `NodeRow`
+3. Add storage in `WindowManager.swift`
+4. Add to `TabState` struct in `SessionManager.swift`
+5. Update `saveCurrentSession()` and `restoreSession()`
+
+### Debug Focus Issues
+
+1. Look for `[DEBUG]` lines in console
+2. Check `tryFocusNode` - is it being called?
+3. Check `setFocus` - is document state updating?
+4. Check `updateNSView` - is SwiftUI triggering re-render?
+5. Check `focusVersion` - might need to increment to force refresh
+
+### Debug Collapse/Visibility Issues
+
+1. Check `collapsedNodeIds` - is the node in the set?
+2. Check `nodesWithDepth` - is the node being included?
+3. Check `flattenedVisible` - is it respecting collapsed state?
+4. Remember: collapse state is PER-TAB, not on the node itself
