@@ -82,15 +82,8 @@ struct ContentView: View {
         .task {
             await WindowManager.shared.loadDocumentIfNeeded()
 
-            // Check for auto-zoom on launch (new bullet created at app start)
-            if let autoZoomId = WindowManager.shared.consumeAutoZoomNodeId() {
-                print("[Launch] Auto-zoom into new node: \(autoZoomId.uuidString.prefix(8))")
-                setZoomedNodeId(autoZoomId)
-                // Focus is already set by WindowManager
-                collapseStateInitialized = true  // Start fresh, no collapse state
-            }
-            // Check for pending zoom from Cmd+T (new tab from current)
-            else if let pending = WindowManager.shared.pendingZoom {
+            // Check for pending zoom from Cmd+T (new tab from current) - takes priority
+            if let pending = WindowManager.shared.pendingZoom {
                 print("[Session] Tab \(windowId) using pendingZoom: \(pending)")
                 setZoomedNodeId(pending)
                 // Set focus to first child of zoomed node so cursor is visible and functional
@@ -135,6 +128,17 @@ struct ContentView: View {
                     WindowManager.shared.registerTabAlwaysOnTop(windowId: windowId, isAlwaysOnTop: restoredAlwaysOnTop)
                     print("[Session] Tab \(windowId) popped alwaysOnTop: \(restoredAlwaysOnTop)")
                 }
+            }
+            // Default: Auto-zoom into fresh bullet (new window/tab without special context)
+            else if let doc = WindowManager.shared.document {
+                // Create new bullet at top and zoom into it
+                let newNode = OutlineNode(title: "")
+                doc.root.addChild(newNode, at: 0)
+                setZoomedNodeId(newNode.id)
+                doc.focusedNodeId = newNode.id
+                collapseStateInitialized = true  // Start fresh
+                print("[Launch] Auto-zoom: created new node \(newNode.id.uuidString.prefix(8)) for new window")
+                iCloudManager.shared.scheduleAutoSave(for: doc)
             }
 
             // If no collapse state was restored, initialize from document
