@@ -45,16 +45,35 @@ Someone who:
 
 ---
 
+## Implemented Features
+
+### Weekly Documents (DONE)
+- Files named by week: `2025-Jan-W05.md`
+- New week automatically creates new file
+- Previous weeks stay in folder as archive
+- Week start day setting in Edit menu (Sunday/Monday/Saturday)
+
+### Auto-Zoom on Launch (DONE)
+- Creates new bullet at top of document on app launch
+- Automatically zooms into that bullet
+- Cursor ready to type immediately
+- Fresh start every time
+
+### Simplified Navigation (DONE)
+- Removed detailed breadcrumb trail
+- Shows only "Home" button when zoomed
+- Week indicator shown at bottom right
+- Window title shows week name at root
+
+---
+
 ## Future Roadmap
 
 ### Planned Features
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| **Weekly reset** | New week = fresh outline. Old week syncs to Notes/Obsidian | High |
-| **Auto-zoom on launch** | Creates new bullet, zooms into it. Fresh start every time. | High |
 | **iOS touch gestures** | Swipe indent/outdent, drag reorder, tap to focus | High |
-| **Hide breadcrumbs option** | Cleaner UI, just back/home buttons | Medium |
 | **Calendar integration** | Drag bullet to day → calendar event | Medium |
 | **Reminders integration** | Drag bullet → reminder | Medium |
 | **Export to Obsidian** | Weekly archive syncs to vault | Medium |
@@ -435,9 +454,15 @@ Press 3: Select siblings    Press 4: Expand to parent
 
 | File | Location |
 |------|----------|
-| Document | `~/Library/Mobile Documents/iCloud~computer~daydreamlab~Lineout-ly/Documents/Lineout-ly/main.md` |
+| Weekly document | `~/Library/Mobile Documents/iCloud~computer~daydreamlab~Lineout-ly/Documents/Lineout-ly/2025-Jan-W05.md` |
 | Session | `~/Library/Mobile Documents/iCloud~computer~daydreamlab~Lineout-ly/Documents/Lineout-ly/session.json` |
 | Local fallback | `~/Documents/Lineout-ly/` (when iCloud unavailable) |
+
+### Weekly File Naming
+- Format: `YYYY-MMM-WXX.md` (e.g., `2025-Jan-W05.md`)
+- Week number is ISO week of year
+- Month is from the first day of that week
+- Week start day configurable: Sunday, Monday, or Saturday
 
 ---
 
