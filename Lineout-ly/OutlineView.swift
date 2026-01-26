@@ -662,6 +662,53 @@ struct OutlineView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: document.selectedNodeIds.isEmpty)
     }
 
+    // Consistent icon size for bottom bar
+    private let bottomBarIconSize: CGFloat = 20
+    private let bottomBarButtonSize: CGFloat = 44
+
+    /// Liquid glass background for bottom bar buttons
+    private func liquidGlassBackground(isCircle: Bool = false) -> some View {
+        Group {
+            if isCircle {
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 2)
+                    .overlay(
+                        Circle()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.5),
+                                        Color.white.opacity(0.1)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 0.5
+                            )
+                    )
+            } else {
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .shadow(color: Color.black.opacity(0.1), radius: 8, x: 0, y: 2)
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.5),
+                                        Color.white.opacity(0.1)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 0.5
+                            )
+                    )
+            }
+        }
+    }
+
     /// Bottom navigation bar with carousel button (Arc-style)
     private var iOSBottomNavBar: some View {
         VStack {
@@ -669,7 +716,7 @@ struct OutlineView: View {
 
             // Only show when not in edit mode and no selection bar visible
             if !isEditMode || document.selectedNodeIds.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     // Carousel button (shows card count)
                     Button {
                         let generator = UIImpactFeedbackGenerator(style: .medium)
@@ -678,61 +725,44 @@ struct OutlineView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "square.stack.3d.up")
-                                .font(.system(size: 18, weight: .medium))
+                                .font(.system(size: bottomBarIconSize, weight: .medium))
                             Text("\(navigationHistory.cardCount)")
                                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                         }
                         .foregroundColor(.primary)
+                        .frame(height: bottomBarButtonSize)
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule()
-                                .fill(.ultraThinMaterial)
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
-                        )
+                        .background(liquidGlassBackground())
                     }
 
                     // Indent/Outdent buttons group
-                    HStack(spacing: 2) {
-                        // Outdent button
+                    HStack(spacing: 0) {
                         Button {
                             let generator = UIImpactFeedbackGenerator(style: .light)
                             generator.impactOccurred()
                             document.outdent()
                         } label: {
                             Image(systemName: "decrease.indent")
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: bottomBarIconSize, weight: .medium))
                                 .foregroundColor(.primary)
-                                .frame(width: 36, height: 36)
+                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
                         }
 
-                        // Indent button
                         Button {
                             let generator = UIImpactFeedbackGenerator(style: .light)
                             generator.impactOccurred()
                             document.indent()
                         } label: {
                             Image(systemName: "increase.indent")
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: bottomBarIconSize, weight: .medium))
                                 .foregroundColor(.primary)
-                                .frame(width: 36, height: 36)
+                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
                         }
                     }
-                    .background(
-                        Capsule()
-                            .fill(.ultraThinMaterial)
-                    )
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
-                    )
+                    .background(liquidGlassBackground())
 
                     // Collapse/Expand buttons group
-                    HStack(spacing: 2) {
-                        // Collapse button
+                    HStack(spacing: 0) {
                         Button {
                             let generator = UIImpactFeedbackGenerator(style: .light)
                             generator.impactOccurred()
@@ -741,12 +771,11 @@ struct OutlineView: View {
                             }
                         } label: {
                             Image(systemName: "chevron.up")
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: bottomBarIconSize, weight: .semibold))
                                 .foregroundColor(.primary)
-                                .frame(width: 36, height: 36)
+                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
                         }
 
-                        // Expand button
                         Button {
                             let generator = UIImpactFeedbackGenerator(style: .light)
                             generator.impactOccurred()
@@ -755,35 +784,26 @@ struct OutlineView: View {
                             }
                         } label: {
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: bottomBarIconSize, weight: .semibold))
                                 .foregroundColor(.primary)
-                                .frame(width: 36, height: 36)
+                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
                         }
                     }
-                    .background(
-                        Capsule()
-                            .fill(.ultraThinMaterial)
-                    )
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
-                    )
+                    .background(liquidGlassBackground())
 
                     // Zoom In/Out buttons group
-                    HStack(spacing: 2) {
-                        // Zoom out button
+                    HStack(spacing: 0) {
                         Button {
                             let generator = UIImpactFeedbackGenerator(style: .light)
                             generator.impactOccurred()
                             handleZoomOut()
                         } label: {
                             Image(systemName: "minus.magnifyingglass")
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: bottomBarIconSize, weight: .medium))
                                 .foregroundColor(.primary)
-                                .frame(width: 36, height: 36)
+                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
                         }
 
-                        // Zoom in button
                         Button {
                             let generator = UIImpactFeedbackGenerator(style: .light)
                             generator.impactOccurred()
@@ -792,19 +812,12 @@ struct OutlineView: View {
                             }
                         } label: {
                             Image(systemName: "plus.magnifyingglass")
-                                .font(.system(size: 16, weight: .medium))
+                                .font(.system(size: bottomBarIconSize, weight: .medium))
                                 .foregroundColor(.primary)
-                                .frame(width: 36, height: 36)
+                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
                         }
                     }
-                    .background(
-                        Capsule()
-                            .fill(.ultraThinMaterial)
-                    )
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
-                    )
+                    .background(liquidGlassBackground())
 
                     Spacer()
 
@@ -815,17 +828,10 @@ struct OutlineView: View {
                         createNewZoomLevel()
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 18, weight: .medium))
+                            .font(.system(size: bottomBarIconSize, weight: .medium))
                             .foregroundColor(.primary)
-                            .frame(width: 40, height: 40)
-                            .background(
-                                Circle()
-                                    .fill(.ultraThinMaterial)
-                            )
-                            .overlay(
-                                Circle()
-                                    .strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
-                            )
+                            .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
+                            .background(liquidGlassBackground(isCircle: true))
                     }
                 }
                 .padding(.horizontal, 16)
