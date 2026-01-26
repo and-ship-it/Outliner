@@ -27,23 +27,8 @@ final class WindowManager {
     /// Map of nodeId -> windowId for locked nodes
     private var nodeLocks: [UUID: UUID] = [:]
 
-    /// Pending zoom for next window (set before opening new tab)
+    /// Pending zoom for next window (set before opening new tab via Cmd+T)
     var pendingZoom: UUID?
-
-    /// Queue of pending zooms for session restore (each new tab pops one)
-    var pendingZoomQueue: [UUID?] = []
-
-    /// Queue of pending collapse states for session restore
-    var pendingCollapseQueue: [Set<UUID>] = []
-
-    /// Queue of pending font sizes for session restore
-    var pendingFontSizeQueue: [Double] = []
-
-    /// Queue of pending always-on-top states for session restore
-    var pendingAlwaysOnTopQueue: [Bool] = []
-
-    /// Index of the tab that should be active after restore
-    var pendingActiveTabIndex: Int = 0
 
     /// Track active tabs and their zoom states
     private var tabZoomStates: [UUID: UUID?] = [:]  // windowId -> zoomedNodeId
@@ -60,30 +45,34 @@ final class WindowManager {
     /// Ordered list of tab window IDs (for tracking active tab index)
     private var tabOrder: [UUID] = []
 
-    private init() {}
-
-    /// Pop the next pending zoom from the queue (for session restore)
-    func popPendingZoom() -> UUID? {
-        guard !pendingZoomQueue.isEmpty else { return nil }
-        return pendingZoomQueue.removeFirst()
+    private init() {
+        // OPTIMISTIC UI: Create placeholder document synchronously
+        // This ensures the loading view is never shown
+        setupPlaceholderDocument()
     }
 
-    /// Pop the next pending collapse state from the queue (for session restore)
-    func popPendingCollapseState() -> Set<UUID>? {
-        guard !pendingCollapseQueue.isEmpty else { return nil }
-        return pendingCollapseQueue.removeFirst()
-    }
+    /// Create placeholder document immediately for optimistic UI
+    private func setupPlaceholderDocument() {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "EEE, d HH:mm"  // e.g., "Tue, 27 15:30"
+        let dateTitle = dateFormatter.string(from: Date())
 
-    /// Pop the next pending font size from the queue (for session restore)
-    func popPendingFontSize() -> Double? {
-        guard !pendingFontSizeQueue.isEmpty else { return nil }
-        return pendingFontSizeQueue.removeFirst()
-    }
+        let placeholderRoot = OutlineNode(title: "__root__")
+        let placeholderNode = OutlineNode(title: dateTitle)
+        placeholderRoot.addChild(placeholderNode)
 
-    /// Pop the next pending always-on-top state from the queue (for session restore)
-    func popPendingAlwaysOnTop() -> Bool? {
-        guard !pendingAlwaysOnTopQueue.isEmpty else { return nil }
-        return pendingAlwaysOnTopQueue.removeFirst()
+        let placeholderDoc = OutlineDocument(root: placeholderRoot)
+        placeholderDoc.autoSaveEnabled = false  // Don't save placeholder
+
+        // Set up for immediate display
+        self.document = placeholderDoc
+        self.autoZoomNodeId = placeholderNode.id
+        self.placeholderNodeId = placeholderNode.id
+        self.placeholderNodeTitle = dateTitle
+        self.isLoading = false  // Show UI immediately!
+        self.isLoadingInBackground = true
+
+        print("[WindowManager] Placeholder ready in init - UI visible immediately")
     }
 
     // MARK: - Tab Tracking
@@ -219,65 +208,24 @@ final class WindowManager {
         tabOrder.removeAll { $0 == windowId }
     }
 
-    /// Get all current tab states for session saving (in tab order)
-    func getCurrentTabStates() -> [SessionManager.TabState] {
-        return tabOrder.compactMap { windowId in
-            guard tabZoomStates[windowId] != nil else { return nil }
-            let zoomId = tabZoomStates[windowId] ?? nil
-            let collapsedIds = tabCollapseStates[windowId] ?? []
-            let fontSize = tabFontSizes[windowId] ?? 13.0
-            let isAlwaysOnTop = tabAlwaysOnTop[windowId] ?? false
-            return SessionManager.TabState(
-                zoomedNodeId: zoomId?.uuidString,
-                collapsedNodeIds: collapsedIds.map { $0.uuidString },
-                fontSize: fontSize,
-                isAlwaysOnTop: isAlwaysOnTop
-            )
-        }
-    }
-
-    /// Get the index of the currently active tab
-    func getActiveTabIndex() -> Int {
-        #if os(macOS)
-        guard let keyWindow = NSApp.keyWindow,
-              let tabGroup = keyWindow.tabGroup else {
-            return 0
-        }
-
-        // Find the index of the key window in the tab group
-        for (index, window) in tabGroup.windows.enumerated() {
-            if window == keyWindow {
-                return index
-            }
-        }
-        #endif
-        return 0
-    }
-
-    /// Select the tab at the pending active index
-    func selectActiveTab() {
-        #if os(macOS)
-        guard let window = NSApp.keyWindow,
-              let tabGroup = window.tabGroup,
-              pendingActiveTabIndex < tabGroup.windows.count else {
-            return
-        }
-
-        let targetWindow = tabGroup.windows[pendingActiveTabIndex]
-        targetWindow.makeKeyAndOrderFront(nil)
-        print("[Session] Switched to tab index: \(pendingActiveTabIndex)")
-        #endif
-    }
-
     // MARK: - Document Loading
 
     /// Pending auto-zoom node for first tab on launch
     private(set) var autoZoomNodeId: UUID?
 
-    func loadDocumentIfNeeded() async {
-        guard document == nil else { return }
+    /// Whether we're still loading the real document in background
+    private(set) var isLoadingInBackground = false
 
-        isLoading = true
+    /// The placeholder node that was created before real document loaded
+    private var placeholderNodeId: UUID?
+    private var placeholderNodeTitle: String = ""
+    private var placeholderNodeChildren: [OutlineNode] = []
+
+    func loadDocumentIfNeeded() async {
+        // Placeholder was already created in init() for optimistic UI
+        guard isLoadingInBackground else { return }  // Already loaded real document
+
+        // Load real document in background
         loadError = nil
 
         do {
@@ -286,38 +234,82 @@ final class WindowManager {
             // Re-check iCloud availability
             await icloud.checkICloudAvailability()
 
-            var doc: OutlineDocument
+            var realDoc: OutlineDocument
 
             if icloud.isICloudAvailable {
-                print("[WindowManager] Loading from iCloud...")
-                doc = try await icloud.loadDocument()
+                print("[WindowManager] Loading real document from iCloud in background...")
+                realDoc = try await icloud.loadDocument()
             } else {
-                print("[WindowManager] iCloud not available, loading from local...")
-                doc = try icloud.loadLocalDocument()
+                print("[WindowManager] Loading real document from local in background...")
+                realDoc = try icloud.loadLocalDocument()
             }
 
-            doc.autoSaveEnabled = true
-            self.document = doc
-            print("[WindowManager] Document loaded, nodes: \(doc.root.children.count)")
-            print("[WindowManager] Current week file: \(icloud.currentWeekFileName)")
+            print("[WindowManager] Real document loaded, nodes: \(realDoc.root.children.count)")
 
-            // Auto-zoom on launch: create new bullet and prepare to zoom into it
-            let newNode = OutlineNode(title: "")
-            doc.root.addChild(newNode, at: 0)  // Insert at top
-            autoZoomNodeId = newNode.id
-            doc.focusedNodeId = newNode.id
-            print("[WindowManager] Auto-zoom: created new node \(newNode.id.uuidString.prefix(8))")
+            // Capture any content user typed into placeholder while loading
+            guard let placeholderDoc = self.document,
+                  let placeholderId = self.placeholderNodeId,
+                  let currentPlaceholder = placeholderDoc.root.find(id: placeholderId) else {
+                // Placeholder was deleted somehow, just use real doc
+                realDoc.autoSaveEnabled = true
+                self.document = realDoc
+                self.autoZoomNodeId = nil
+                print("[WindowManager] Placeholder not found, using real document as-is")
+                icloud.scheduleAutoSave(for: realDoc)
+                isLoadingInBackground = false
+                return
+            }
+
+            // Deep copy the placeholder node (preserves user's content and same ID)
+            let mergedNode = currentPlaceholder.deepCopy()
+
+            // Remove from placeholder's parent (if any)
+            mergedNode.parent = nil
+
+            // Add to real document (at the end)
+            realDoc.root.addChild(mergedNode)
+
+            // The autoZoomNodeId is already set to the placeholder's ID
+            // which is now the same as mergedNode.id (since deepCopy preserves ID)
+
+            print("[WindowManager] Merged placeholder content into real document")
+            print("[WindowManager] Auto-zoom node: '\(mergedNode.title)' (\(mergedNode.id.uuidString.prefix(8)))")
+
+            // CRITICAL: Set focus BEFORE switching documents to prevent focus loss
+            // When document changes, SwiftUI re-renders and checks isFocused
+            // If focusedNodeId isn't set, the text field will resign first responder
+            if let firstChild = mergedNode.children.first {
+                realDoc.focusedNodeId = firstChild.id
+                print("[WindowManager] Pre-set focus to first child: \(firstChild.id.uuidString.prefix(8))")
+            } else {
+                // No children - create one and focus it
+                let emptyChild = OutlineNode(title: "")
+                mergedNode.addChild(emptyChild)
+                realDoc.focusedNodeId = emptyChild.id
+                print("[WindowManager] Created empty child and pre-set focus: \(emptyChild.id.uuidString.prefix(8))")
+            }
+
+            // Switch to real document (focus is already set, so text field won't lose focus)
+            realDoc.autoSaveEnabled = true
+            self.document = realDoc
+
+            // Increment focus version after a short delay to ensure view is ready
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                realDoc.focusVersion += 1
+                print("[WindowManager] Focus version incremented")
+            }
 
             // Trigger save for the new node
-            doc.autoSaveEnabled = true
-            icloud.scheduleAutoSave(for: doc)
+            icloud.scheduleAutoSave(for: realDoc)
 
         } catch {
             print("[WindowManager] Load error: \(error)")
             loadError = error
+            // Keep the placeholder document so user doesn't lose their work
+            // They can try again later
         }
 
-        isLoading = false
+        isLoadingInBackground = false
     }
 
     /// Consume the auto-zoom node ID (call once from first tab)
@@ -329,6 +321,8 @@ final class WindowManager {
 
     func reloadDocument() async {
         document = nil
+        placeholderNodeId = nil
+        isLoadingInBackground = false
         await loadDocumentIfNeeded()
     }
 

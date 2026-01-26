@@ -30,13 +30,18 @@ enum OutlineAction {
     case selectRowUp      // Shift+Up: select current row, then extend up
     case progressiveSelectAll  // Cmd+A progressive selection
     case clearSelection        // Escape to clear selection
+    case copySelected          // Cmd+C with multi-selection
+    case cutSelected           // Cmd+X with multi-selection
     case deleteWithChildren
     case deleteSelected        // Delete all selected nodes (Cmd+Shift+Backspace with selection)
     case deleteEmpty           // Delete empty bullet on backspace (merge with previous)
+    case mergeWithPrevious(String)  // Merge current text with previous bullet (backspace at beginning)
     case toggleTask
     case toggleFocusMode
     case goHomeAndCollapseAll
     case toggleSearch
+    case smartPaste([OutlineNode], cursorAtEnd: Bool, cursorAtStart: Bool)  // Structured paste
+    case insertLink(URL)  // Insert URL and fetch title asynchronously
 }
 
 /// Custom field editor (standard cursor)
@@ -227,7 +232,7 @@ struct OutlineTextField: NSViewRepresentable {
         textField.isEditable = !isLocked
         textField.isSelectable = !isLocked
 
-        // Update text color, strikethrough, and search highlighting
+        // Update text color, strikethrough, search highlighting, and link styling
         if isTaskCompleted {
             textField.textColor = NSColor.secondaryLabelColor
             // Apply strikethrough using attributed string
@@ -259,21 +264,63 @@ struct OutlineTextField: NSViewRepresentable {
 
             textField.attributedStringValue = attributedString
         } else {
-            textField.textColor = NSColor.labelColor
-            // Remove strikethrough/highlighting by setting plain string
-            if textField.attributedStringValue.string == text {
-                // Check if it has strikethrough or highlighting and remove it
-                let range = NSRange(location: 0, length: textField.attributedStringValue.length)
-                if range.length > 0 {
-                    var hasFormatting = false
-                    textField.attributedStringValue.enumerateAttribute(.strikethroughStyle, in: range) { value, _, _ in
-                        if value != nil { hasFormatting = true }
+            // Check for markdown links and style them
+            let links = LinkParser.parseMarkdownLinks(text)
+            if !links.isEmpty {
+                textField.textColor = NSColor.labelColor
+                let attributedString = NSMutableAttributedString(string: text, attributes: [
+                    .foregroundColor: NSColor.labelColor,
+                    .font: weightedFont
+                ])
+
+                // Style each markdown link
+                for link in links {
+                    let fullRange = NSRange(link.range, in: text)
+
+                    // Make the entire [text](url) very dim
+                    attributedString.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: fullRange)
+
+                    // Find and style just the link text part (between [ and ])
+                    let linkPattern = "\\[([^\\]]+)\\]"
+                    if let regex = try? NSRegularExpression(pattern: linkPattern, options: []),
+                       let match = regex.firstMatch(in: text, options: [], range: fullRange),
+                       let textPartRange = Range(match.range(at: 1), in: text) {
+                        let nsTextRange = NSRange(textPartRange, in: text)
+                        // Link text: grey, underlined
+                        attributedString.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: nsTextRange)
+                        attributedString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsTextRange)
+                        attributedString.addAttribute(.underlineColor, value: NSColor.secondaryLabelColor, range: nsTextRange)
+                        // Store URL for click handling
+                        attributedString.addAttribute(.link, value: link.url, range: nsTextRange)
                     }
-                    textField.attributedStringValue.enumerateAttribute(.backgroundColor, in: range) { value, _, _ in
-                        if value != nil { hasFormatting = true }
-                    }
-                    if hasFormatting {
-                        textField.stringValue = text
+                }
+
+                textField.attributedStringValue = attributedString
+
+                // Store links on the text field for click handling
+                if let outlineTextField = textField as? OutlineNSTextField {
+                    outlineTextField.markdownLinks = links.map { (NSRange($0.range, in: text), $0.url) }
+                }
+            } else {
+                textField.textColor = NSColor.labelColor
+                // Remove strikethrough/highlighting by setting plain string
+                if textField.attributedStringValue.string == text {
+                    // Check if it has strikethrough or highlighting and remove it
+                    let range = NSRange(location: 0, length: textField.attributedStringValue.length)
+                    if range.length > 0 {
+                        var hasFormatting = false
+                        textField.attributedStringValue.enumerateAttribute(.strikethroughStyle, in: range) { value, _, _ in
+                            if value != nil { hasFormatting = true }
+                        }
+                        textField.attributedStringValue.enumerateAttribute(.backgroundColor, in: range) { value, _, _ in
+                            if value != nil { hasFormatting = true }
+                        }
+                        textField.attributedStringValue.enumerateAttribute(.underlineStyle, in: range) { value, _, _ in
+                            if value != nil { hasFormatting = true }
+                        }
+                        if hasFormatting {
+                            textField.stringValue = text
+                        }
                     }
                 }
             }
@@ -293,14 +340,15 @@ struct OutlineTextField: NSViewRepresentable {
                 context.coordinator.lastFocusVersion = focusVersion
             }
 
-            if (!isCurrentlyFirstResponder || needsForcedRefocus) && !context.coordinator.isUpdatingFocus {
+            if !isCurrentlyFirstResponder && !context.coordinator.isUpdatingFocus {
+                // Not currently focused - need to become first responder
                 print("[DEBUG] updateNSView: will refocus - isCurrentlyFirstResponder=\(isCurrentlyFirstResponder), needsForcedRefocus=\(needsForcedRefocus)")
-                // Need to become first responder and start editing
                 context.coordinator.isUpdatingFocus = true
 
                 // Capture values for async block
                 let shouldCursorAtEnd = cursorAtEnd
                 let cursorPositionedCallback = onCursorPositioned
+                let coordinator = context.coordinator
 
                 // Use async dispatch to ensure view is fully ready after structural changes
                 DispatchQueue.main.async {
@@ -318,9 +366,10 @@ struct OutlineTextField: NSViewRepresentable {
                             editor.selectedRange = NSRange(location: 0, length: 0)
                         }
                     }
-                }
 
-                context.coordinator.isUpdatingFocus = false
+                    // Reset flag AFTER async work completes
+                    coordinator.isUpdatingFocus = false
+                }
             }
 
             // ALWAYS ensure insertion point is visible when we should be focused
@@ -445,6 +494,13 @@ struct OutlineTextField: NSViewRepresentable {
                 // Backspace on empty bullet: delete the bullet and move to previous
                 if textView.string.isEmpty {
                     parent.onAction?(.deleteEmpty)
+                    return true
+                }
+                // Backspace at beginning of bullet with text: merge with previous bullet
+                let cursorPosition = textView.selectedRange().location
+                if cursorPosition == 0 && !textView.string.isEmpty {
+                    let currentText = textView.string
+                    parent.onAction?(.mergeWithPrevious(currentText))
                     return true
                 }
                 // Otherwise, let default backspace behavior delete character
@@ -583,6 +639,9 @@ class OutlineNSTextField: NSTextField {
     var currentNodeId: UUID?
     var currentNodeTitle: String = ""  // For debugging
 
+    // Markdown links for click handling
+    var markdownLinks: [(range: NSRange, url: URL)] = []
+
     // STATIC flag: tracks if ANY OutlineNSTextField is receiving a mouse click
     // This is needed because view recycling can cause a different text field instance
     // to become first responder than the one that received the mouse click
@@ -670,6 +729,16 @@ class OutlineNSTextField: NSTextField {
             return
         }
 
+        // Check if clicking on a markdown link - open URL instead of editing
+        if !markdownLinks.isEmpty {
+            let clickPoint = convert(event.locationInWindow, from: nil)
+            if let clickedURL = urlAtPoint(clickPoint) {
+                // Cmd+click or single click on link opens URL
+                NSWorkspace.shared.open(clickedURL)
+                return
+            }
+        }
+
         // CRITICAL: Call onMouseDownFocus IMMEDIATELY, BEFORE super.mouseDown
         // This updates document.focusedNodeId before SwiftUI reacts to the click
         // Otherwise SwiftUI will force-focus the OLD node based on stale focusedNodeId
@@ -680,6 +749,44 @@ class OutlineNSTextField: NSTextField {
         print("[DEBUG] mouseDown: calling super.mouseDown for node '\(currentNodeTitle)'")
         super.mouseDown(with: event)
         print("[DEBUG] mouseDown: super.mouseDown completed for node '\(currentNodeTitle)'")
+    }
+
+    /// Check if a point is within a markdown link and return its URL
+    private func urlAtPoint(_ point: NSPoint) -> URL? {
+        // Try to use layout manager when editing (more accurate)
+        if let layoutManager = (currentEditor() as? NSTextView)?.layoutManager,
+           let textContainer = (currentEditor() as? NSTextView)?.textContainer {
+            let textPoint = NSPoint(x: point.x - 2, y: point.y)  // Adjust for text inset
+            let glyphIndex = layoutManager.glyphIndex(for: textPoint, in: textContainer)
+            let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+
+            for (range, url) in markdownLinks {
+                if charIndex >= range.location && charIndex < range.location + range.length {
+                    return url
+                }
+            }
+            return nil
+        }
+
+        // Not editing - estimate position from bounds
+        guard let cell = cell else { return nil }
+        let cellFrame = bounds
+        let textRect = cell.titleRect(forBounds: cellFrame)
+
+        // Estimate character position from click
+        let relativeX = point.x - textRect.origin.x
+        let textWidth = max(textRect.width, 1.0)
+        let textCount = max(stringValue.count, 1)
+        let charWidth = textWidth / CGFloat(textCount)
+        let estimatedCharIndex = Int(relativeX / charWidth)
+
+        // Check if estimated position falls within any link range
+        for (range, url) in markdownLinks {
+            if estimatedCharIndex >= range.location && estimatedCharIndex < range.location + range.length {
+                return url
+            }
+        }
+        return nil
     }
 
     override func becomeFirstResponder() -> Bool {
@@ -721,14 +828,20 @@ class OutlineNSTextField: NSTextField {
         // - Escape (which handles clearing itself)
         // - Cmd+A (which handles selection itself)
         // - Shift+Up/Down (which extends selection)
+        // - Cmd+C (copy selected)
+        // - Cmd+X (cut selected)
+        // - Tab/Shift+Tab (indent/outdent selected)
         if hasMultiSelection {
             let isCmdShiftBackspace = event.keyCode == 51 && hasCommand && hasShift
             let isEscape = event.keyCode == 53
             let isCmdA = event.keyCode == 0 && hasCommand && !hasShift && !hasOption
             let isShiftUp = event.keyCode == 126 && hasShift && !hasCommand && !hasOption
             let isShiftDown = event.keyCode == 125 && hasShift && !hasCommand && !hasOption
+            let isCmdC = event.keyCode == 8 && hasCommand && !hasShift && !hasOption
+            let isCmdX = event.keyCode == 7 && hasCommand && !hasShift && !hasOption
+            let isTab = event.keyCode == 48
 
-            if !isCmdShiftBackspace && !isEscape && !isCmdA && !isShiftUp && !isShiftDown {
+            if !isCmdShiftBackspace && !isEscape && !isCmdA && !isShiftUp && !isShiftDown && !isCmdC && !isCmdX && !isTab {
                 cmdASelectionLevel = 0
                 actionHandler?(.clearSelection)
             }
@@ -893,6 +1006,35 @@ class OutlineNSTextField: NSTextField {
                 return handleProgressiveCmdA()
             }
 
+        case 8: // C
+            if hasCommand && !hasShift && !hasOption {
+                // Cmd+C: Copy selected nodes if multi-selection active
+                if hasMultiSelection {
+                    actionHandler?(.copySelected)
+                    return true
+                }
+                // Otherwise let default copy handle text selection
+            }
+
+        case 7: // X
+            if hasCommand && !hasShift && !hasOption {
+                // Cmd+X: Cut selected nodes if multi-selection active
+                if hasMultiSelection {
+                    actionHandler?(.cutSelected)
+                    return true
+                }
+                // Otherwise let default cut handle text selection
+            }
+
+        case 9: // V
+            if hasCommand && !hasShift && !hasOption {
+                // Cmd+V: Smart Paste
+                if handleSmartPaste() {
+                    return true
+                }
+                // If smart paste returned false, let default paste handle it
+            }
+
         default:
             break
         }
@@ -933,6 +1075,59 @@ class OutlineNSTextField: NSTextField {
             actionHandler?(.progressiveSelectAll)
             return true
         }
+    }
+
+    // MARK: - Smart Paste
+
+    /// Handle smart paste - returns true if paste was handled, false to use default
+    private func handleSmartPaste() -> Bool {
+        let pasteboard = NSPasteboard.general
+        guard let text = pasteboard.string(forType: .string) else {
+            print("[SmartPaste] No string content in pasteboard")
+            return false
+        }
+
+        // Check if pasting just a URL - convert to smart link
+        if let url = SmartPasteParser.isJustURL(text) {
+            print("[SmartPaste] Detected URL: \(url)")
+            actionHandler?(.insertLink(url))
+            return true
+        }
+
+        print("[SmartPaste] Parsing: '\(text.prefix(50))...' (\(text.count) chars)")
+        let result = SmartPasteParser.parse(text)
+        print("[SmartPaste] Result: \(result.nodes.count) nodes, isSingleLine=\(result.isSingleLine)")
+
+        // Single line without structure → let default paste handle it
+        if result.isSingleLine && result.nodes.count <= 1 {
+            if let node = result.nodes.first {
+                // If it's a simple node (no children, not a task), use default paste
+                if !node.hasChildren && !node.isTask {
+                    return false
+                }
+            } else {
+                // Empty result, use default paste
+                return false
+            }
+        }
+
+        // Structured content → smart paste
+        if !result.nodes.isEmpty {
+            let cursorPos: Int
+            if let editor = currentEditor() {
+                cursorPos = editor.selectedRange.location
+            } else {
+                cursorPos = stringValue.count
+            }
+            let textLength = stringValue.count
+            let cursorAtEnd = cursorPos >= textLength
+            let cursorAtStart = cursorPos == 0
+
+            actionHandler?(.smartPaste(result.nodes, cursorAtEnd: cursorAtEnd, cursorAtStart: cursorAtStart))
+            return true
+        }
+
+        return false
     }
 
     override func keyDown(with event: NSEvent) {
@@ -1224,33 +1419,353 @@ class OutlineNSTextField: NSTextField {
 }
 
 #else
-// iOS fallback - use standard TextField (single line)
-struct OutlineTextField: View {
+// iOS implementation with spacebar trackpad navigation across nodes
+import UIKit
+
+struct OutlineTextField: UIViewRepresentable {
     @Binding var text: String
     var isFocused: Bool
-    var nodeId: UUID = UUID()  // Not used on iOS but needed for API compatibility
-    var nodeTitle: String = ""  // Not used on iOS but needed for API compatibility
-    var cursorAtEnd: Bool = false  // Not used on iOS but needed for API compatibility
-    var focusVersion: Int = 0  // Not used on iOS but needed for API compatibility
-    var onCursorPositioned: (() -> Void)? = nil  // Not used on iOS but needed for API compatibility
+    var nodeId: UUID = UUID()
+    var nodeTitle: String = ""
+    var cursorAtEnd: Bool = false
+    var focusVersion: Int = 0
+    var onCursorPositioned: (() -> Void)? = nil
     var onFocusChange: (Bool) -> Void
-    var font: Font = .body
-    var fontWeight: Font.Weight = .regular
+    var onCreateSibling: (() -> Void)? = nil
+    var onNavigateUp: (() -> Void)? = nil  // Navigate to previous node
+    var onNavigateDown: (() -> Void)? = nil  // Navigate to next node
+    var onInsertLink: ((URL) -> Void)? = nil  // Insert URL as smart link
+    var fontSize: CGFloat = 17
+    var fontWeight: UIFont.Weight = .regular
 
-    @FocusState private var textFieldFocused: Bool
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
 
-    var body: some View {
-        TextField("", text: $text)
-            .textFieldStyle(.plain)
-            .font(font)
-            .fontWeight(fontWeight)
-            .focused($textFieldFocused)
-            .onChange(of: isFocused) { _, newValue in
-                textFieldFocused = newValue
+    func makeUIView(context: Context) -> TrackpadTextField {
+        let textField = TrackpadTextField()
+        textField.delegate = context.coordinator
+        textField.text = text
+        textField.font = UIFont.systemFont(ofSize: fontSize, weight: fontWeight)
+        textField.borderStyle = .none
+        textField.backgroundColor = .clear
+        textField.returnKeyType = .default
+        textField.autocorrectionType = .default
+        textField.autocapitalizationType = .sentences
+
+        // Store coordinator reference for callbacks
+        let coordinator = context.coordinator
+
+        // Set up navigation callbacks
+        textField.onNavigateUp = { [weak coordinator] in
+            coordinator?.parent.onNavigateUp?()
+        }
+        textField.onNavigateDown = { [weak coordinator] in
+            coordinator?.parent.onNavigateDown?()
+        }
+        textField.onReturn = { [weak coordinator] in
+            coordinator?.parent.onCreateSibling?()
+        }
+        textField.onInsertLink = { [weak coordinator] url in
+            coordinator?.parent.onInsertLink?(url)
+        }
+
+        // Add target for text changes
+        textField.addTarget(coordinator, action: #selector(Coordinator.textFieldDidChange(_:)), for: .editingChanged)
+
+        return textField
+    }
+
+    func updateUIView(_ textField: TrackpadTextField, context: Context) {
+        // Keep coordinator's parent reference up to date (critical for callbacks!)
+        context.coordinator.parent = self
+
+        // Update font
+        let font = UIFont.systemFont(ofSize: fontSize, weight: fontWeight)
+        textField.font = font
+
+        // Check for markdown links and apply styling
+        let links = LinkParser.parseMarkdownLinks(text)
+        if !links.isEmpty && textField.text != text {
+            let attributedString = NSMutableAttributedString(string: text, attributes: [
+                .foregroundColor: UIColor.label,
+                .font: font
+            ])
+
+            // Style each markdown link
+            for link in links {
+                let fullRange = NSRange(link.range, in: text)
+
+                // Make the entire [text](url) very dim
+                attributedString.addAttribute(.foregroundColor, value: UIColor.tertiaryLabel, range: fullRange)
+
+                // Find and style just the link text part (between [ and ])
+                let linkPattern = "\\[([^\\]]+)\\]"
+                if let regex = try? NSRegularExpression(pattern: linkPattern, options: []),
+                   let match = regex.firstMatch(in: text, options: [], range: fullRange),
+                   let textPartRange = Range(match.range(at: 1), in: text) {
+                    let nsTextRange = NSRange(textPartRange, in: text)
+                    // Link text: grey, underlined
+                    attributedString.addAttribute(.foregroundColor, value: UIColor.secondaryLabel, range: nsTextRange)
+                    attributedString.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: nsTextRange)
+                    attributedString.addAttribute(.underlineColor, value: UIColor.secondaryLabel, range: nsTextRange)
+                }
             }
-            .onChange(of: textFieldFocused) { _, newValue in
-                onFocusChange(newValue)
+
+            textField.attributedText = attributedString
+            textField.markdownLinks = links.map { (NSRange($0.range, in: text), $0.url) }
+        } else if textField.text != text {
+            // No links - use plain text
+            textField.text = text
+            textField.markdownLinks = []
+        }
+
+        // Handle focus changes
+        // Only call becomeFirstResponder for the focused field
+        // DON'T call resignFirstResponder - let iOS handle it automatically
+        // This keeps the keyboard visible during focus transitions between bullets
+        if isFocused && !textField.isFirstResponder {
+            DispatchQueue.main.async {
+                textField.becomeFirstResponder()
+                if cursorAtEnd {
+                    // Position cursor at end
+                    let endPosition = textField.endOfDocument
+                    textField.selectedTextRange = textField.textRange(from: endPosition, to: endPosition)
+                }
             }
+        }
+        // Note: We deliberately don't resignFirstResponder here
+        // When focus moves to a new text field, it automatically takes over
+        // This prevents keyboard from dismissing during bullet creation
+    }
+
+    class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: OutlineTextField
+        private var lastCursorPosition: Int = 0
+        private var isTrackpadMode: Bool = false
+
+        init(_ parent: OutlineTextField) {
+            self.parent = parent
+        }
+
+        @objc func textFieldDidChange(_ textField: UITextField) {
+            parent.text = textField.text ?? ""
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            parent.onFocusChange(true)
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            parent.onFocusChange(false)
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            print("[DEBUG] textFieldShouldReturn called, onCreateSibling is \(parent.onCreateSibling == nil ? "nil" : "set")")
+            parent.onCreateSibling?()
+            return false
+        }
+    }
+}
+
+/// Custom UITextField that detects spacebar trackpad cursor movement at text boundaries
+class TrackpadTextField: UITextField, UITextDropDelegate, UIGestureRecognizerDelegate {
+    var onNavigateUp: (() -> Void)?
+    var onNavigateDown: (() -> Void)?
+    var onReturn: (() -> Void)?
+    var onInsertLink: ((URL) -> Void)?
+
+    // Markdown links for tap handling
+    var markdownLinks: [(range: NSRange, url: URL)] = []
+
+    private var lastSelectionStart: UITextPosition?
+    private var consecutiveLeftAttempts: Int = 0
+    private var consecutiveRightAttempts: Int = 0
+    private var lastChangeTime: Date = Date()
+    private let navigationThreshold: Int = 2  // Number of attempts at boundary before navigating
+    private var isInContinuousNavigation: Bool = false  // After first nav, allow continuous navigation
+    private var lastNavigationDirection: Int = 0  // -1 for up, 1 for down, 0 for none
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupObservers()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupObservers()
+    }
+
+    private func setupObservers() {
+        // Observe selection changes
+        addTarget(self, action: #selector(selectionDidChange), for: .editingChanged)
+
+        // Disable text drop to prevent drag data from being inserted as text
+        textDropDelegate = self
+
+        // Add tap gesture for link handling
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tapGesture.delegate = self
+        addGestureRecognizer(tapGesture)
+    }
+
+    @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+        guard !markdownLinks.isEmpty else { return }
+
+        let tapPoint = gesture.location(in: self)
+        if let tappedURL = urlAtPoint(tapPoint) {
+            UIApplication.shared.open(tappedURL)
+        }
+    }
+
+    /// Check if a point is within a markdown link and return its URL
+    private func urlAtPoint(_ point: CGPoint) -> URL? {
+        guard let text = text, !text.isEmpty else { return nil }
+
+        // Estimate character position from tap
+        let textRect = textRect(forBounds: bounds)
+        let relativeX = point.x - textRect.origin.x
+        let textWidth = max(textRect.width, 1.0)
+        let textCount = max(text.count, 1)
+        let charWidth = textWidth / CGFloat(textCount)
+        let estimatedCharIndex = Int(relativeX / charWidth)
+
+        // Check if estimated position falls within any link range
+        for (range, url) in markdownLinks {
+            if estimatedCharIndex >= range.location && estimatedCharIndex < range.location + range.length {
+                return url
+            }
+        }
+        return nil
+    }
+
+    // MARK: - UIGestureRecognizerDelegate
+
+    /// Only recognize tap if it's on a link
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard !markdownLinks.isEmpty else { return false }
+        let tapPoint = touch.location(in: self)
+        return urlAtPoint(tapPoint) != nil
+    }
+
+    // MARK: - UITextDropDelegate
+
+    /// Reject all drops - we handle drag-drop at the row level, not in the text field
+    func textDroppableView(_ textDroppableView: UIView & UITextDroppable, proposalForDrop drop: UITextDropRequest) -> UITextDropProposal {
+        return UITextDropProposal(operation: .cancel)
+    }
+
+    @objc private func selectionDidChange() {
+        // Reset attempts when text changes
+        consecutiveLeftAttempts = 0
+        consecutiveRightAttempts = 0
+    }
+
+    override var selectedTextRange: UITextRange? {
+        didSet {
+            checkBoundaryNavigation()
+        }
+    }
+
+    private func checkBoundaryNavigation() {
+        guard let selectedRange = selectedTextRange else { return }
+
+        let currentPosition = selectedRange.start
+        let now = Date()
+
+        // Only check if this is a rapid selection change (trackpad mode)
+        let timeSinceLastChange = now.timeIntervalSince(lastChangeTime)
+
+        // Reset continuous navigation mode after a pause
+        if timeSinceLastChange > 0.5 {
+            isInContinuousNavigation = false
+            lastNavigationDirection = 0
+        }
+
+        // Check if cursor is at the beginning
+        if offset(from: beginningOfDocument, to: currentPosition) == 0 {
+            // Cursor is at the start
+            if let last = lastSelectionStart,
+               offset(from: beginningOfDocument, to: last) == 0,
+               timeSinceLastChange < 0.3 {
+                consecutiveLeftAttempts += 1
+
+                // In continuous mode going same direction, navigate immediately
+                // Otherwise require threshold
+                let threshold = (isInContinuousNavigation && lastNavigationDirection == -1) ? 1 : navigationThreshold
+
+                if consecutiveLeftAttempts >= threshold {
+                    // Navigate to previous node with cursor at end
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.impactOccurred()
+                    onNavigateUp?()
+                    consecutiveLeftAttempts = 0
+                    isInContinuousNavigation = true
+                    lastNavigationDirection = -1
+                }
+            }
+            consecutiveRightAttempts = 0
+        }
+        // Check if cursor is at the end
+        else if offset(from: currentPosition, to: endOfDocument) == 0 {
+            // Cursor is at the end
+            if let last = lastSelectionStart,
+               offset(from: last, to: endOfDocument) == 0,
+               timeSinceLastChange < 0.3 {
+                consecutiveRightAttempts += 1
+
+                // In continuous mode going same direction, navigate immediately
+                // Otherwise require threshold
+                let threshold = (isInContinuousNavigation && lastNavigationDirection == 1) ? 1 : navigationThreshold
+
+                if consecutiveRightAttempts >= threshold {
+                    // Navigate to next node with cursor at start
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.impactOccurred()
+                    onNavigateDown?()
+                    consecutiveRightAttempts = 0
+                    isInContinuousNavigation = true
+                    lastNavigationDirection = 1
+                }
+            }
+            consecutiveLeftAttempts = 0
+        } else {
+            // Cursor is in the middle, reset counters and continuous mode
+            consecutiveLeftAttempts = 0
+            consecutiveRightAttempts = 0
+            isInContinuousNavigation = false
+            lastNavigationDirection = 0
+        }
+
+        lastSelectionStart = currentPosition
+        lastChangeTime = now
+    }
+
+    // Handle keyboard return key
+    override func insertText(_ text: String) {
+        if text == "\n" {
+            print("[DEBUG] TrackpadTextField.insertText: newline detected, calling onReturn")
+            onReturn?()
+            return
+        }
+        super.insertText(text)
+    }
+
+    // Handle paste - detect URLs for smart link conversion
+    override func paste(_ sender: Any?) {
+        guard let text = UIPasteboard.general.string else {
+            super.paste(sender)
+            return
+        }
+
+        // Check if pasting just a URL
+        if let url = SmartPasteParser.isJustURL(text) {
+            onInsertLink?(url)
+            return
+        }
+
+        // Default paste behavior
+        super.paste(sender)
     }
 }
 #endif

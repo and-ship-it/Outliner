@@ -14,6 +14,7 @@ struct BulletView: View {
     var isCollapsed: Bool  // Per-tab collapse state (passed from parent)
     var scale: CGFloat = 1.0  // Scale factor for sizing
     var onTap: () -> Void = {}
+    var onDoubleTap: () -> Void = {}  // iOS: double-tap to zoom into node
 
     // Base sizes (at scale 1.0)
     private let baseSize: CGFloat = 22
@@ -28,23 +29,23 @@ struct BulletView: View {
     var body: some View {
         Button(action: onTap) {
             ZStack {
-                // Highlight background when focused
+                // Highlight background when focused - warm amber glow
                 if isFocused {
                     Circle()
-                        .fill(Color.accentColor.opacity(0.15))
+                        .fill(AppTheme.focusHighlight)
                         .frame(width: size, height: size)
                 }
 
                 // The actual bullet/disclosure
                 if node.hasChildren {
-                    // Disclosure triangle
+                    // Disclosure triangle - teal for structure, amber when focused
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                         .font(.system(size: chevronSize, weight: .semibold))
-                        .foregroundStyle(isFocused ? Color.accentColor : Color.secondary)
+                        .foregroundStyle(isFocused ? AppTheme.focusedChevron : AppTheme.chevron)
                 } else {
-                    // Simple bullet
+                    // Simple bullet - coral for unfocused, amber for focused
                     Circle()
-                        .fill(isFocused ? Color.accentColor : Color.secondary.opacity(0.5))
+                        .fill(isFocused ? AppTheme.focusedBullet : AppTheme.bullet)
                         .frame(width: bulletSize, height: bulletSize)
                 }
             }
@@ -52,6 +53,15 @@ struct BulletView: View {
         .buttonStyle(.plain)
         .frame(width: size, height: size)
         .contentShape(Circle())
+        #if os(iOS)
+        // Double-tap gesture for zoom (iOS only)
+        .simultaneousGesture(
+            TapGesture(count: 2)
+                .onEnded { _ in
+                    onDoubleTap()
+                }
+        )
+        #endif
     }
 }
 

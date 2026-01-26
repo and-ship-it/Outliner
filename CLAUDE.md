@@ -65,6 +65,34 @@ Someone who:
 - Week indicator shown at bottom right
 - Window title shows week name at root
 
+### iOS Touch Gestures (DONE)
+- Swipe right to indent
+- Swipe left to outdent
+- Long-press to enter selection mode
+- Drag and drop to reorder
+- Two-finger tap to enter multi-selection mode
+- Double-tap bullet to zoom in
+- Swipe from left edge to zoom out (like iOS back gesture)
+
+### Smart Link Pasting (DONE)
+- Paste URL → automatically fetches page title
+- Creates short title (max 5 words)
+- Displays as underlined grey clickable text
+- Click to open link in browser
+- Markdown format: `[Title](url)`
+
+### Share Extension (DONE)
+- Share content to app from any iOS app
+- Creates "Shared" node at root level if not exists
+- Adds short description bullet under "Shared"
+- Nested content: links become smart links, text becomes bullets
+- Supports URLs (with title fetching) and text (list parsing)
+
+### Settings with iCloud Sync (DONE)
+- Three-dot settings button on iOS (like Reminders)
+- Settings sync across devices via iCloud
+- Font size, focus mode, autocomplete toggle, week start day
+
 ---
 
 ## Future Roadmap
@@ -73,20 +101,9 @@ Someone who:
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| **iOS touch gestures** | Swipe indent/outdent, drag reorder, tap to focus | High |
 | **Calendar integration** | Drag bullet to day → calendar event | Medium |
 | **Reminders integration** | Drag bullet → reminder | Medium |
 | **Export to Obsidian** | Weekly archive syncs to vault | Medium |
-
-### iOS Touch Gestures (To Build)
-
-| Gesture | Action |
-|---------|--------|
-| Tap bullet | Focus |
-| Swipe right | Indent |
-| Swipe left | Outdent |
-| Long-press drag | Reorder |
-| Pinch (maybe) | Zoom in/out |
 
 ---
 
@@ -96,7 +113,6 @@ Someone who:
 - One shared document (`main.md`) stored in iCloud Drive
 - All windows/tabs share the same document
 - Auto-saves changes with 1-second debounce
-- Session state stored separately in `session.json`
 
 ### Key Files
 | File | Purpose |
@@ -104,13 +120,16 @@ Someone who:
 | `OutlineDocument.swift` | Document model with undo/redo support |
 | `OutlineNode.swift` | Tree node model (title, body, children, collapse state) |
 | `WindowManager.swift` | Shared state across windows, tab tracking, node locking |
-| `SessionManager.swift` | Session persistence (zoom, collapse, font size per tab) |
 | `iCloudManager.swift` | iCloud file operations |
 | `ContentView.swift` | Root view per window, manages per-tab state |
 | `OutlineView.swift` | Main outline display with zoom and search |
 | `NodeRow.swift` | Single bullet row with text field |
-| `OutlineTextField.swift` | Custom NSTextField with keyboard handling |
+| `OutlineTextField.swift` | Custom NSTextField/UITextField with keyboard handling |
 | `BulletView.swift` | Bullet/chevron indicator |
+| `LinkParser.swift` | URL detection, title fetching, markdown link formatting |
+| `SmartPasteParser.swift` | Parses pasted content into outline structure |
+| `SettingsManager.swift` | App settings with iCloud sync |
+| `ShareExtension/ShareViewController.swift` | iOS Share Extension handler |
 
 ### Per-Tab State
 Each tab maintains independent:
@@ -119,12 +138,12 @@ Each tab maintains independent:
 - **Font size** - Text size (9-32pt)
 - **Always on top** - Window floats above others
 
-### Session Persistence
-Saved to `session.json` on app quit, restored on launch:
-- Per-tab state (zoom, collapse, font size, always-on-top)
-- Active tab index
-- Focused node ID
-- Autocomplete enabled setting
+### Fresh Start on Launch
+Every app launch starts fresh:
+- Creates a new bullet with date/time title
+- Automatically zooms into that bullet
+- User can start typing immediately
+- No session restore (intentional for "thinking tool" philosophy)
 
 ---
 
@@ -247,7 +266,6 @@ Saved to `session.json` on app quit, restored on launch:
 ### Collapse State
 - **Per-tab**: Each tab has independent collapse state
 - Collapsing in Tab 1 doesn't affect Tab 2
-- Saved and restored with session
 - Chevron indicates collapsed (→) or expanded (↓)
 
 ### Multi-Selection
@@ -264,12 +282,6 @@ Saved to `session.json` on app quit, restored on launch:
 - When editing in one tab, node is locked in other tabs
 - Lock indicator (🔒) shown on locked nodes
 - Prevents concurrent editing conflicts
-
-### Session Restore
-- Enabled by default (toggle in View menu)
-- Restores all tabs with their zoom, collapse, font size
-- Restores which tab was active
-- Restores focused node position
 
 ---
 
@@ -455,7 +467,6 @@ Press 3: Select siblings    Press 4: Expand to parent
 | File | Location |
 |------|----------|
 | Weekly document | `~/Library/Mobile Documents/iCloud~computer~daydreamlab~Lineout-ly/Documents/Lineout-ly/2025-Jan-W05.md` |
-| Session | `~/Library/Mobile Documents/iCloud~computer~daydreamlab~Lineout-ly/Documents/Lineout-ly/session.json` |
 | Local fallback | `~/Documents/Lineout-ly/` (when iCloud unavailable) |
 
 ### Weekly File Naming
@@ -478,7 +489,6 @@ Press 3: Select siblings    Press 4: Expand to parent
 - State tracked in `WindowManager.tabCollapseStates`, `tabFontSizes`, etc.
 - Passed to views via `@Binding`
 - Changes synced to WindowManager via `onChange`
-- Saved via `SessionManager.saveCurrentSession()`
 
 ### Undo/Redo
 - `OutlineDocument.undoManager` tracks all structural changes
@@ -642,9 +652,7 @@ Bindings passed to NodeRow
     ↓
 Changes flow back up via @Binding
     ↓
-WindowManager stores for session persistence
-    ↓
-SessionManager saves to session.json
+WindowManager stores for tab tracking
 ```
 
 ### Key Bindings Pattern
@@ -677,8 +685,7 @@ Lineout-ly/
 ├── BulletView.swift         # Bullet/chevron indicator
 ├── OutlineDocument.swift    # Document model
 ├── OutlineNode.swift        # Tree node model
-├── WindowManager.swift      # Cross-window state
-├── SessionManager.swift     # Session persistence
+├── WindowManager.swift      # Cross-window state, optimistic UI loading
 ├── iCloudManager.swift      # iCloud file operations
 └── TrashBin.swift           # Deleted nodes storage
 ```
@@ -699,8 +706,6 @@ Lineout-ly/
 1. Add `@State` in `ContentView.swift`
 2. Pass as `@Binding` through `OutlineView` → `NodeRow`
 3. Add storage in `WindowManager.swift`
-4. Add to `TabState` struct in `SessionManager.swift`
-5. Update `saveCurrentSession()` and `restoreSession()`
 
 ### Debug Focus Issues
 

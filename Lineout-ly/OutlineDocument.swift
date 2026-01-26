@@ -8,6 +8,11 @@
 import Foundation
 import SwiftUI
 import Combine
+#if os(macOS)
+import AppKit
+#elseif os(iOS)
+import UIKit
+#endif
 
 /// The main document model managing the outline tree state
 @Observable
@@ -99,9 +104,42 @@ final class OutlineDocument {
             .map { $0 }
     }
 
-    /// All visible nodes respecting collapse and zoom state
+    /// All visible nodes respecting collapse and zoom state (uses node.isCollapsed)
+    /// Note: For per-tab collapse state, use visibleNodes(collapsedNodeIds:) instead
     var visibleNodes: [OutlineNode] {
         displayRoot.flattenedVisible()
+    }
+
+    /// Compute visible nodes using per-tab zoom and collapse state
+    func visibleNodes(zoomedNodeId: UUID?, collapsedNodeIds: Set<UUID>) -> [OutlineNode] {
+        var result: [OutlineNode] = []
+
+        // Get the effective root for this tab's zoom state
+        if let zoomId = zoomedNodeId, let zoomed = root.find(id: zoomId) {
+            // When zoomed, include the zoomed node itself first (it appears at depth 0 in the view)
+            result.append(zoomed)
+            // Then add its visible children (if not collapsed)
+            if !collapsedNodeIds.contains(zoomed.id) {
+                result.append(contentsOf: flattenedVisible(from: zoomed, collapsedNodeIds: collapsedNodeIds))
+            }
+        } else {
+            // Not zoomed - just return visible children of root
+            result = flattenedVisible(from: root, collapsedNodeIds: collapsedNodeIds)
+        }
+
+        return result
+    }
+
+    /// Helper to flatten visible nodes with per-tab collapse state
+    private func flattenedVisible(from node: OutlineNode, collapsedNodeIds: Set<UUID>) -> [OutlineNode] {
+        var result: [OutlineNode] = []
+        for child in node.children {
+            result.append(child)
+            if !collapsedNodeIds.contains(child.id) {
+                result.append(contentsOf: flattenedVisible(from: child, collapsedNodeIds: collapsedNodeIds))
+            }
+        }
+        return result
     }
 
     // MARK: - Search
@@ -143,27 +181,41 @@ final class OutlineDocument {
     }
 
     func moveFocusUp() {
+        moveFocusUp(zoomedNodeId: nil, collapsedNodeIds: nil)
+    }
+
+    func moveFocusUp(zoomedNodeId: UUID?, collapsedNodeIds: Set<UUID>?) {
         guard let focused = focusedNode else {
             // Focus first visible node
-            focusedNodeId = visibleNodes.first?.id
+            let visible = self.visibleNodes(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds ?? [])
+            focusedNodeId = visible.first?.id
+            focusVersion += 1
             return
         }
 
-        let visible = visibleNodes
+        let visible = self.visibleNodes(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds ?? [])
         guard let index = visible.firstIndex(of: focused), index > 0 else { return }
         focusedNodeId = visible[index - 1].id
+        focusVersion += 1  // Force cursor refresh
     }
 
     func moveFocusDown() {
+        moveFocusDown(zoomedNodeId: nil, collapsedNodeIds: nil)
+    }
+
+    func moveFocusDown(zoomedNodeId: UUID?, collapsedNodeIds: Set<UUID>?) {
         guard let focused = focusedNode else {
             // Focus first visible node
-            focusedNodeId = visibleNodes.first?.id
+            let visible = self.visibleNodes(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds ?? [])
+            focusedNodeId = visible.first?.id
+            focusVersion += 1
             return
         }
 
-        let visible = visibleNodes
+        let visible = self.visibleNodes(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds ?? [])
         guard let index = visible.firstIndex(of: focused), index < visible.count - 1 else { return }
         focusedNodeId = visible[index + 1].id
+        focusVersion += 1  // Force cursor refresh
     }
 
     func focusParent() {
@@ -171,6 +223,7 @@ final class OutlineDocument {
         // Don't focus the invisible root or go above zoom level
         if parent.isRoot || parent.id == zoomedNodeId { return }
         focusedNodeId = parent.id
+        focusVersion += 1  // Force cursor refresh
     }
 
     func focusFirstChild() {
@@ -180,6 +233,7 @@ final class OutlineDocument {
             focused.expand()
         }
         focusedNodeId = child.id
+        focusVersion += 1  // Force cursor refresh
     }
 
     // MARK: - Multi-Selection (Progressive Cmd+A)
@@ -406,6 +460,8 @@ final class OutlineDocument {
         }
         // Don't zoom to invisible root
         if parent.isRoot {
+            // Going to root - delete empty auto-created bullet
+            deleteNodeIfEmpty(zoomed.id)
             zoomedNodeId = nil
         } else {
             zoomedNodeId = parent.id
@@ -413,7 +469,49 @@ final class OutlineDocument {
     }
 
     func zoomToRoot() {
+        // Delete empty auto-created bullet before going home
+        if let zoomId = zoomedNodeId {
+            deleteNodeIfEmpty(zoomId)
+        }
         zoomedNodeId = nil
+    }
+
+    /// Delete a node if it's empty (used for auto-created bullets when going home)
+    /// A node is considered "empty" if:
+    /// - It has no children, OR
+    /// - All its children have empty titles, empty bodies, and no grandchildren
+    func deleteNodeIfEmpty(_ nodeId: UUID) {
+        guard let node = root.find(id: nodeId),
+              node.parent != nil else { return }
+
+        // Check if node is empty
+        let isEmpty: Bool
+        if node.children.isEmpty {
+            isEmpty = true
+        } else {
+            // Check if all children are empty
+            isEmpty = node.children.allSatisfy { child in
+                child.title.isEmpty && child.body.isEmpty && child.children.isEmpty
+            }
+        }
+
+        guard isEmpty else {
+            print("[Document] Node not empty, keeping: \(node.title)")
+            return
+        }
+
+        print("[Document] Deleting empty auto-created node: \(node.title)")
+
+        // Remove the node (no undo for auto-cleanup)
+        node.removeFromParent()
+
+        // Focus the first remaining node
+        if let firstNode = root.children.first {
+            focusedNodeId = firstNode.id
+            focusVersion += 1
+        }
+
+        structureDidChange()
     }
 
     func zoomTo(_ node: OutlineNode) {
@@ -543,6 +641,202 @@ final class OutlineDocument {
         return newNode
     }
 
+    // MARK: - Smart Paste
+
+    /// Insert parsed nodes at cursor position
+    /// When zoomed, nodes are inserted as children of the zoomed node
+    @discardableResult
+    func smartPasteNodes(_ nodes: [OutlineNode], cursorAtEnd: Bool, cursorAtStart: Bool, zoomedNodeId: UUID? = nil) -> OutlineNode? {
+        guard !nodes.isEmpty else { return nil }
+        print("[SmartPaste] smartPasteNodes called with \(nodes.count) nodes, cursorAtEnd=\(cursorAtEnd), cursorAtStart=\(cursorAtStart), zoomed=\(zoomedNodeId != nil)")
+
+        // If zoomed, insert as children of the zoomed node
+        if let zoomId = zoomedNodeId, let zoomedNode = root.find(id: zoomId) {
+            return insertNodesAsChildren(nodes, of: zoomedNode)
+        }
+
+        guard let focused = focusedNode else {
+            // No focus - insert at root level
+            if let lastChild = root.children.last {
+                return insertNodesAsSiblings(nodes, below: lastChild)
+            } else {
+                // Empty document - add as children of root
+                for node in nodes {
+                    root.addChild(node)
+                }
+                structureDidChange()
+                return nodes.first
+            }
+        }
+
+        // If focused node is empty, replace with first pasted node
+        if focused.title.isEmpty && focused.body.isEmpty && !focused.hasChildren {
+            let firstNode = nodes[0]
+            let previousTitle = focused.title
+            let previousBody = focused.body
+            let previousIsTask = focused.isTask
+            let previousIsTaskCompleted = focused.isTaskCompleted
+
+            // Update focused node with first pasted content
+            focused.title = firstNode.title
+            focused.isTask = firstNode.isTask
+            focused.isTaskCompleted = firstNode.isTaskCompleted
+
+            // Add first node's children to focused
+            for child in firstNode.children {
+                focused.addChild(child)
+            }
+
+            // Register undo for the replacement
+            let focusedId = focused.id
+            let childIds = firstNode.children.map { $0.id }
+            undoManager.registerUndo(withTarget: self) { doc in
+                guard let node = doc.root.find(id: focusedId) else { return }
+                node.title = previousTitle
+                node.body = previousBody
+                node.isTask = previousIsTask
+                node.isTaskCompleted = previousIsTaskCompleted
+                // Remove children that were added
+                for childId in childIds {
+                    if let child = node.children.first(where: { $0.id == childId }) {
+                        child.removeFromParent()
+                    }
+                }
+                doc.structureDidChange()
+            }
+
+            // Insert remaining nodes as siblings if there are more
+            if nodes.count > 1 {
+                let remainingNodes = Array(nodes.dropFirst())
+                _ = insertNodesAsSiblings(remainingNodes, below: focused)
+            }
+
+            undoManager.setActionName("Paste")
+            structureDidChange()
+            return focused
+        }
+
+        // Insert as siblings based on cursor position
+        if cursorAtStart {
+            return insertNodesAbove(nodes, anchor: focused)
+        } else {
+            return insertNodesAsSiblings(nodes, below: focused)
+        }
+    }
+
+    /// Insert nodes as siblings below the anchor node
+    @discardableResult
+    func insertNodesAsSiblings(_ nodes: [OutlineNode], below anchor: OutlineNode) -> OutlineNode? {
+        guard !nodes.isEmpty else { return nil }
+        guard let parent = anchor.parent, let anchorIndex = anchor.indexInParent else {
+            // Anchor is root or has no parent - add as children of root
+            for node in nodes {
+                root.addChild(node)
+            }
+            let nodeIds = nodes.map { $0.id }
+            undoManager.registerUndo(withTarget: self) { doc in
+                doc.removeNodesForUndo(nodeIds)
+            }
+            undoManager.setActionName("Paste")
+            structureDidChange()
+            return nodes.first
+        }
+
+        let previousFocusId = focusedNodeId
+
+        // Insert all nodes as siblings, in order after anchor
+        var insertIndex = anchorIndex + 1
+        for node in nodes {
+            parent.addChild(node, at: insertIndex)
+            insertIndex += 1
+        }
+
+        // Register undo - remove all inserted nodes
+        let nodeIds = nodes.map { $0.id }
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.removeNodesForUndo(nodeIds)
+            doc.focusedNodeId = previousFocusId
+        }
+        undoManager.setActionName("Paste")
+
+        structureDidChange()
+        return nodes.first
+    }
+
+    /// Insert nodes as siblings above the anchor node
+    @discardableResult
+    func insertNodesAbove(_ nodes: [OutlineNode], anchor: OutlineNode) -> OutlineNode? {
+        guard !nodes.isEmpty else { return nil }
+        guard let parent = anchor.parent, let anchorIndex = anchor.indexInParent else {
+            // Anchor is root or has no parent - add as children of root at beginning
+            for (i, node) in nodes.enumerated() {
+                root.addChild(node, at: i)
+            }
+            let nodeIds = nodes.map { $0.id }
+            undoManager.registerUndo(withTarget: self) { doc in
+                doc.removeNodesForUndo(nodeIds)
+            }
+            undoManager.setActionName("Paste")
+            structureDidChange()
+            return nodes.first
+        }
+
+        let previousFocusId = focusedNodeId
+
+        // Insert all nodes above anchor, in order
+        var insertIndex = anchorIndex
+        for node in nodes {
+            parent.addChild(node, at: insertIndex)
+            insertIndex += 1
+        }
+
+        // Register undo - remove all inserted nodes
+        let nodeIds = nodes.map { $0.id }
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.removeNodesForUndo(nodeIds)
+            doc.focusedNodeId = previousFocusId
+        }
+        undoManager.setActionName("Paste")
+
+        structureDidChange()
+        return nodes.first
+    }
+
+    /// Insert nodes as children of a parent node
+    @discardableResult
+    func insertNodesAsChildren(_ nodes: [OutlineNode], of parent: OutlineNode) -> OutlineNode? {
+        guard !nodes.isEmpty else { return nil }
+
+        let previousFocusId = focusedNodeId
+
+        // Insert all nodes as children at the end
+        for node in nodes {
+            parent.addChild(node)
+        }
+
+        // Register undo - remove all inserted nodes
+        let nodeIds = nodes.map { $0.id }
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.removeNodesForUndo(nodeIds)
+            doc.focusedNodeId = previousFocusId
+        }
+        undoManager.setActionName("Paste")
+
+        structureDidChange()
+        return nodes.first
+    }
+
+    /// Remove nodes by ID (for undo operations)
+    private func removeNodesForUndo(_ nodeIds: [UUID]) {
+        for nodeId in nodeIds {
+            if let node = root.find(id: nodeId) {
+                node.removeFromParent()
+            }
+        }
+        ensureMinimumNode()
+        structureDidChange()
+    }
+
     // MARK: - Node Deletion
 
     func deleteFocused() {
@@ -607,6 +901,55 @@ final class OutlineDocument {
             doc.restoreNodeForUndo(nodeCopy, parentId: parentId, atIndex: indexInParent, restoreFocusTo: previousFocusId)
         }
         undoManager.setActionName("Delete")
+
+        structureDidChange()
+    }
+
+    /// Merge the current bullet with the previous one (backspace at beginning of text)
+    /// The text from the current bullet is appended to the previous bullet
+    func mergeWithPrevious(textToMerge: String, zoomedNodeId: UUID?, collapsedNodeIds: Set<UUID>) {
+        guard let focused = focusedNode else { return }
+
+        let visible = self.visibleNodes(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
+        guard let index = visible.firstIndex(of: focused), index > 0 else { return }
+
+        let previousNode = visible[index - 1]
+        let previousTitle = previousNode.title
+
+        // Save state for undo
+        let currentNodeCopy = focused.deepCopy()
+        let parentId = focused.parent?.id
+        let indexInParent = focused.indexInParent ?? 0
+        let previousFocusId = focusedNodeId
+        let originalPreviousTitle = previousTitle
+
+        // Append current text to previous node
+        previousNode.title = previousTitle + textToMerge
+
+        // Move to trash before deleting
+        TrashBin.shared.trash(focused)
+
+        // Delete current node
+        focused.removeFromParent()
+
+        // Focus the previous node with cursor at end (after merged text)
+        cursorAtEndOnNextFocus = true
+        focusedNodeId = previousNode.id
+        focusVersion += 1
+
+        // Ensure there's always at least one node
+        ensureMinimumNode()
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            // Restore previous node's title
+            if let prevNode = doc.root.find(id: previousNode.id) {
+                prevNode.title = originalPreviousTitle
+            }
+            // Restore deleted node
+            doc.restoreNodeForUndo(currentNodeCopy, parentId: parentId, atIndex: indexInParent, restoreFocusTo: previousFocusId)
+        }
+        undoManager.setActionName("Merge Bullets")
 
         structureDidChange()
     }
@@ -690,6 +1033,79 @@ final class OutlineDocument {
             root.addChild(newNode)
             focusedNodeId = newNode.id
         }
+    }
+
+    // MARK: - Copy/Cut Selected
+
+    /// Copy selected nodes to clipboard as markdown
+    func copySelected() {
+        guard !selectedNodeIds.isEmpty else { return }
+
+        // Get selected nodes sorted by visible position (top to bottom)
+        let selectedNodes = selectedNodeIds.compactMap { root.find(id: $0) }
+        let visible = visibleNodes
+        let sortedNodes = selectedNodes.sorted { n1, n2 in
+            let i1 = visible.firstIndex(of: n1) ?? 0
+            let i2 = visible.firstIndex(of: n2) ?? 0
+            return i1 < i2
+        }
+
+        // Filter to top-level selected only (exclude children of selected parents)
+        let topLevelSelected = sortedNodes.filter { node in
+            !node.pathFromRoot().dropLast().contains { selectedNodeIds.contains($0.id) }
+        }
+
+        // Convert to markdown
+        var markdown = ""
+        for node in topLevelSelected {
+            markdown += nodeToMarkdown(node, indent: 0)
+        }
+
+        // Put on pasteboard
+        #if os(macOS)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(markdown, forType: .string)
+        #elseif os(iOS)
+        UIPasteboard.general.string = markdown
+        #endif
+
+        print("[Copy] Copied \(topLevelSelected.count) nodes to clipboard")
+    }
+
+    /// Cut selected nodes (copy + delete)
+    func cutSelected() {
+        copySelected()
+        deleteSelected()
+    }
+
+    /// Convert a node and its children to markdown format
+    private func nodeToMarkdown(_ node: OutlineNode, indent: Int) -> String {
+        var result = ""
+        let indentStr = String(repeating: "  ", count: indent)
+
+        // Format the bullet
+        if node.isTask {
+            let checkbox = node.isTaskCompleted ? "[x]" : "[ ]"
+            result += "\(indentStr)- \(checkbox) \(node.title)\n"
+        } else {
+            result += "\(indentStr)- \(node.title)\n"
+        }
+
+        // Add body if present
+        if !node.body.isEmpty {
+            let bodyLines = node.body.components(separatedBy: "\n")
+            for line in bodyLines {
+                result += "\(indentStr)  \(line)\n"
+            }
+        }
+
+        // Add children recursively
+        for child in node.children {
+            result += nodeToMarkdown(child, indent: indent + 1)
+        }
+
+        return result
     }
 
     /// Delete all selected nodes and position cursor at nearest remaining bullet
@@ -887,7 +1303,30 @@ final class OutlineDocument {
         structureDidChange()
     }
 
+    /// Check if the focused node can be indented (has a previous sibling to become child of)
+    func canIndent() -> Bool {
+        guard let focused = focusedNode,
+              focused.parent != nil,
+              focused.previousSibling != nil else { return false }
+        return true
+    }
+
+    /// Check if the focused node can be outdented (has a grandparent to move to)
+    func canOutdent() -> Bool {
+        guard let focused = focusedNode,
+              let parent = focused.parent,
+              parent.parent != nil else { return false }
+        return true
+    }
+
     func indent() {
+        // Multi-selection indent
+        if !selectedNodeIds.isEmpty {
+            indentSelected()
+            return
+        }
+
+        // Single node indent
         guard let focused = focusedNode,
               let parent = focused.parent,
               let previousSibling = focused.previousSibling else { return }
@@ -908,7 +1347,84 @@ final class OutlineDocument {
         structureDidChange()
     }
 
+    /// Indent all selected nodes
+    func indentSelected() {
+        // Get selected nodes sorted by position (top to bottom)
+        let selectedNodes = selectedNodeIds.compactMap { root.find(id: $0) }
+        guard !selectedNodes.isEmpty else { return }
+
+        let visible = visibleNodes
+        let sortedByPosition = selectedNodes.sorted { n1, n2 in
+            let i1 = visible.firstIndex(of: n1) ?? 0
+            let i2 = visible.firstIndex(of: n2) ?? 0
+            return i1 < i2  // Top to bottom
+        }
+
+        // Group consecutive siblings together
+        // Each group will be indented under the previous sibling of the first node
+        var groups: [[OutlineNode]] = []
+        var currentGroup: [OutlineNode] = []
+
+        for node in sortedByPosition {
+            if currentGroup.isEmpty {
+                currentGroup.append(node)
+            } else if let lastNode = currentGroup.last,
+                      lastNode.parent === node.parent,
+                      let lastIndex = lastNode.indexInParent,
+                      let nodeIndex = node.indexInParent,
+                      nodeIndex == lastIndex + 1 {
+                // Consecutive sibling - add to current group
+                currentGroup.append(node)
+            } else {
+                // Not consecutive - start new group
+                groups.append(currentGroup)
+                currentGroup = [node]
+            }
+        }
+        if !currentGroup.isEmpty {
+            groups.append(currentGroup)
+        }
+
+        // Store restore info for undo
+        var restoreInfos: [(nodeId: UUID, parentId: UUID, index: Int)] = []
+
+        // Process each group: move all nodes to be children of the previous sibling of the first node
+        for group in groups {
+            guard let firstNode = group.first,
+                  let previousSibling = firstNode.previousSibling else { continue }
+
+            // Move all nodes in the group to be children of previousSibling
+            for node in group {
+                guard let parent = node.parent else { continue }
+                restoreInfos.append((node.id, parent.id, node.indexInParent ?? 0))
+                node.removeFromParent()
+                previousSibling.addChild(node)  // Adds at end, maintains order
+            }
+            previousSibling.expand()
+        }
+
+        guard !restoreInfos.isEmpty else { return }
+
+        // Register undo for all moves
+        undoManager.registerUndo(withTarget: self) { doc in
+            // Restore in reverse order
+            for info in restoreInfos.reversed() {
+                doc.moveNodeForUndo(info.nodeId, toParentId: info.parentId, atIndex: info.index)
+            }
+        }
+        undoManager.setActionName("Indent")
+
+        structureDidChange()
+    }
+
     func outdent() {
+        // Multi-selection outdent
+        if !selectedNodeIds.isEmpty {
+            outdentSelected()
+            return
+        }
+
+        // Single node outdent
         guard let focused = focusedNode,
               let parent = focused.parent,
               let grandparent = parent.parent else { return }
@@ -927,6 +1443,164 @@ final class OutlineDocument {
             doc.moveNodeForUndo(focused.id, toParentId: originalParentId, atIndex: originalIndex)
         }
         undoManager.setActionName("Outdent")
+
+        structureDidChange()
+    }
+
+    /// Outdent all selected nodes
+    func outdentSelected() {
+        // Get selected nodes sorted by position (process from top to bottom)
+        let selectedNodes = selectedNodeIds.compactMap { root.find(id: $0) }
+        guard !selectedNodes.isEmpty else { return }
+
+        // Sort by visible position (top to bottom)
+        let visible = visibleNodes
+        let sortedNodes = selectedNodes.sorted { n1, n2 in
+            let i1 = visible.firstIndex(of: n1) ?? 0
+            let i2 = visible.firstIndex(of: n2) ?? 0
+            return i1 < i2
+        }
+
+        // Store restore info for undo
+        var restoreInfos: [(nodeId: UUID, parentId: UUID, index: Int)] = []
+
+        // Track insertion offset for nodes being inserted after the same parent
+        var insertionOffsets: [UUID: Int] = [:]
+
+        for node in sortedNodes {
+            guard let parent = node.parent,
+                  let grandparent = parent.parent,
+                  let parentIndex = parent.indexInParent else { continue }
+
+            // Skip if parent is also selected (will be moved together)
+            if selectedNodeIds.contains(parent.id) { continue }
+
+            restoreInfos.append((node.id, parent.id, node.indexInParent ?? 0))
+
+            // Calculate insertion index with offset for multiple nodes
+            let offset = insertionOffsets[parent.id] ?? 0
+            let insertIndex = parentIndex + 1 + offset
+            insertionOffsets[parent.id] = offset + 1
+
+            node.removeFromParent()
+            grandparent.addChild(node, at: insertIndex)
+        }
+
+        guard !restoreInfos.isEmpty else { return }
+
+        // Register undo for all moves
+        undoManager.registerUndo(withTarget: self) { doc in
+            // Restore in reverse order
+            for info in restoreInfos.reversed() {
+                doc.moveNodeForUndo(info.nodeId, toParentId: info.parentId, atIndex: info.index)
+            }
+        }
+        undoManager.setActionName("Outdent")
+
+        structureDidChange()
+    }
+
+    /// Move a node to be a sibling after a target node (for iOS drag-drop)
+    func moveNodeAfter(nodeId: UUID, targetId: UUID) {
+        guard let node = root.find(id: nodeId),
+              let target = root.find(id: targetId),
+              let targetParent = target.parent,
+              let targetIndex = target.indexInParent else { return }
+
+        // Don't allow moving a node to be after itself
+        guard nodeId != targetId else { return }
+
+        // Don't allow moving a node to be its own descendant
+        if target.isDescendant(of: node) { return }
+
+        // Save state for undo
+        let originalParentId = node.parent?.id
+        let originalIndex = node.indexInParent ?? 0
+        let previousFocusId = focusedNodeId
+
+        // Remove from current position
+        node.removeFromParent()
+
+        // Calculate new index (after target, but adjust if we removed from before target)
+        var newIndex = targetIndex + 1
+        if let origParentId = originalParentId,
+           origParentId == targetParent.id,
+           originalIndex < targetIndex {
+            newIndex -= 1
+        }
+
+        // Insert at new position
+        targetParent.addChild(node, at: newIndex)
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            doc.moveNodeForUndo(nodeId, toParentId: originalParentId ?? doc.root.id, atIndex: originalIndex)
+            doc.focusedNodeId = previousFocusId
+        }
+        undoManager.setActionName("Move")
+
+        structureDidChange()
+    }
+
+    /// Move multiple selected nodes to be siblings after a target node (for iOS drag-drop)
+    func moveSelectedNodesAfter(targetId: UUID) {
+        guard !selectedNodeIds.isEmpty else { return }
+
+        let target = root.find(id: targetId)
+        guard let targetParent = target?.parent,
+              let targetIndex = target?.indexInParent else { return }
+
+        // Get selected nodes sorted by their current position (to maintain relative order)
+        let selectedNodes = selectedNodeIds.compactMap { root.find(id: $0) }
+        let sortedNodes = selectedNodes.sorted { n1, n2 in
+            let visible = visibleNodes
+            let i1 = visible.firstIndex(of: n1) ?? 0
+            let i2 = visible.firstIndex(of: n2) ?? 0
+            return i1 < i2
+        }
+
+        // Save state for undo
+        struct MoveInfo {
+            let nodeId: UUID
+            let originalParentId: UUID?
+            let originalIndex: Int
+        }
+        var moveInfos: [MoveInfo] = []
+        for node in sortedNodes {
+            moveInfos.append(MoveInfo(
+                nodeId: node.id,
+                originalParentId: node.parent?.id,
+                originalIndex: node.indexInParent ?? 0
+            ))
+        }
+        let previousFocusId = focusedNodeId
+
+        // Remove all selected nodes first
+        for node in sortedNodes {
+            // Skip if this is the target or a descendant would cause issues
+            if node.id == targetId { continue }
+            if target?.isDescendant(of: node) == true { continue }
+            node.removeFromParent()
+        }
+
+        // Insert after target in reverse order to maintain relative positions
+        var insertIndex = targetIndex + 1
+        for node in sortedNodes {
+            if node.id == targetId { continue }
+            if target?.isDescendant(of: node) == true { continue }
+            targetParent.addChild(node, at: insertIndex)
+            insertIndex += 1
+        }
+
+        // Register undo
+        undoManager.registerUndo(withTarget: self) { doc in
+            // Restore in reverse order
+            for info in moveInfos.reversed() {
+                doc.moveNodeForUndo(info.nodeId, toParentId: info.originalParentId ?? doc.root.id, atIndex: info.originalIndex)
+            }
+            doc.focusedNodeId = previousFocusId
+        }
+        undoManager.setActionName("Move")
 
         structureDidChange()
     }

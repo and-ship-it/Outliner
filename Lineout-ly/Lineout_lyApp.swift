@@ -52,18 +52,27 @@ struct Lineout_lyApp: App {
             ContentView()
         }
         .commands {
-            // Replace New Document with New Window
+            #if os(macOS)
+            // Replace New Document with New Window (macOS only)
             CommandGroup(replacing: .newItem) {
                 Button("New Window") {
                     openNewWindow()
                 }
                 .keyboardShortcut("n", modifiers: .command)
             }
+            #endif
 
             OutlineCommands()
         }
         #if os(macOS)
         .defaultSize(width: 800, height: 600)
+        #endif
+
+        // macOS Preferences window (Cmd+,)
+        #if os(macOS)
+        Settings {
+            SettingsView()
+        }
         #endif
     }
 }
@@ -80,7 +89,6 @@ struct OutlineCommands: Commands {
     @FocusedValue(\.undoManager) var undoManager
     @FocusedValue(\.collapsedNodeIds) var collapsedNodeIdsBinding
     @AppStorage("autocompleteEnabled") var autocompleteEnabled: Bool = true
-    @AppStorage("restorePreviousSession") var restorePreviousSession: Bool = true
 
     var body: some Commands {
         // File menu additions
@@ -192,7 +200,12 @@ struct OutlineCommands: Commands {
             Button("Zoom Out") {
                 zoomOut()
             }
+            #if os(macOS)
             .keyboardShortcut(",", modifiers: .command)
+            #else
+            // Use different shortcut on iOS to avoid conflict with Settings (Cmd+,)
+            .keyboardShortcut(",", modifiers: [.command, .shift])
+            #endif
             .disabled(document == nil)
 
             Button("Zoom to Root") {
@@ -237,10 +250,6 @@ struct OutlineCommands: Commands {
                 set: { alwaysOnTopBinding?.wrappedValue = $0 }
             ))
             .keyboardShortcut("t", modifiers: [.command, .option])
-
-            Divider()
-
-            Toggle("Restore Previous Session on Launch", isOn: $restorePreviousSession)
         }
 
         // Outline menu
@@ -347,6 +356,7 @@ struct OutlineCommands: Commands {
               let focused = doc.focusedNode else { return }
         withAnimation(.easeOut(duration: 0.2)) {
             zoomedNodeIdBinding?.wrappedValue = focused.id
+            doc.focusVersion += 1  // Force cursor refresh
         }
     }
 
@@ -360,16 +370,31 @@ struct OutlineCommands: Commands {
             } else {
                 zoomedNodeIdBinding?.wrappedValue = nil
             }
+            doc.focusVersion += 1  // Force cursor refresh
         }
     }
 
     private func zoomToRoot() {
+        // Delete empty auto-created bullet before going home
+        if let currentZoomId = zoomedNodeIdBinding?.wrappedValue,
+           let doc = document {
+            doc.deleteNodeIfEmpty(currentZoomId)
+        }
         withAnimation(.easeOut(duration: 0.2)) {
             zoomedNodeIdBinding?.wrappedValue = nil
+            // Force cursor refresh after zoom change
+            if let doc = document {
+                doc.focusVersion += 1
+            }
         }
     }
 
     private func goHomeAndCollapseAll() {
+        // Delete empty auto-created bullet before going home
+        if let currentZoomId = zoomedNodeIdBinding?.wrappedValue,
+           let doc = document {
+            doc.deleteNodeIfEmpty(currentZoomId)
+        }
         withAnimation(.easeOut(duration: 0.2)) {
             zoomedNodeIdBinding?.wrappedValue = nil
             // Collapse all nodes with children in per-tab state
@@ -381,6 +406,12 @@ struct OutlineCommands: Commands {
                     }
                 }
                 collapsedNodeIdsBinding?.wrappedValue = collapsed
+
+                // Focus first visible node (first child of root after collapsing)
+                if let firstNode = doc.root.children.first {
+                    doc.focusedNodeId = firstNode.id
+                    doc.focusVersion += 1
+                }
             }
         }
     }
@@ -530,13 +561,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         return true
-    }
-
-    /// Save session state before app terminates
-    func applicationWillTerminate(_ notification: Notification) {
-        Task { @MainActor in
-            SessionManager.shared.saveCurrentSession()
-        }
     }
 }
 #endif

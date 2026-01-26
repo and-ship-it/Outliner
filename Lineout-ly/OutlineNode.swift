@@ -161,6 +161,11 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         return false
     }
 
+    /// Check if this node is a descendant of another node
+    func isDescendant(of node: OutlineNode) -> Bool {
+        return node.isAncestor(of: self)
+    }
+
     /// Get path from root to this node
     func pathFromRoot() -> [OutlineNode] {
         var path: [OutlineNode] = []
