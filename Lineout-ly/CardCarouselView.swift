@@ -478,17 +478,19 @@ struct CardPreviewView: View {
                         if depth > 0 {
                             HStack(spacing: 0) {
                                 ForEach(0..<depth, id: \.self) { level in
-                                    ZStack(alignment: .leading) {
-                                        if level < treeLines.count && treeLines[level] {
-                                            Rectangle()
-                                                .fill(Color.gray.opacity(0.3))
-                                                .frame(width: 1)
-                                                .offset(x: treeLineOffset - 0.5)
-                                                .padding(.top, -4)
-                                                .padding(.bottom, -4)
+                                    Color.clear
+                                        .frame(width: indentWidth)
+                                        .overlay(alignment: .topLeading) {
+                                            if level < treeLines.count && treeLines[level] {
+                                                Rectangle()
+                                                    .fill(Color.gray.opacity(0.3))
+                                                    .frame(width: 1, height: nil)
+                                                    .frame(maxHeight: .infinity)
+                                                    .offset(x: treeLineOffset - 0.5)
+                                                    .padding(.top, -4)
+                                                    .padding(.bottom, -4)
+                                            }
                                         }
-                                    }
-                                    .frame(width: indentWidth, alignment: .leading)
                                 }
                             }
                         }
@@ -761,17 +763,19 @@ struct MacOSCardPreviewView: View {
                         if depth > 0 {
                             HStack(spacing: 0) {
                                 ForEach(0..<depth, id: \.self) { level in
-                                    ZStack(alignment: .leading) {
-                                        if level < treeLines.count && treeLines[level] {
-                                            Rectangle()
-                                                .fill(Color.gray.opacity(0.3))
-                                                .frame(width: 1)
-                                                .offset(x: treeLineOffset - 0.5)
-                                                .padding(.top, -3)
-                                                .padding(.bottom, -3)
+                                    Color.clear
+                                        .frame(width: indentWidth)
+                                        .overlay(alignment: .topLeading) {
+                                            if level < treeLines.count && treeLines[level] {
+                                                Rectangle()
+                                                    .fill(Color.gray.opacity(0.3))
+                                                    .frame(width: 1, height: nil)
+                                                    .frame(maxHeight: .infinity)
+                                                    .offset(x: treeLineOffset - 0.5)
+                                                    .padding(.top, -3)
+                                                    .padding(.bottom, -3)
+                                            }
                                         }
-                                    }
-                                    .frame(width: indentWidth, alignment: .leading)
                                 }
                             }
                         }

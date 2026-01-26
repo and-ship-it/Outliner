@@ -458,20 +458,24 @@ struct NodeRow: View {
             if effectiveDepth > 0 {
                 HStack(spacing: 0) {
                     ForEach(0..<effectiveDepth, id: \.self) { level in
-                        ZStack(alignment: .leading) {
-                            // Vertical line if there are more siblings at this level
-                            if level < treeLines.count && treeLines[level] {
-                                let lineWidth = max(1, scale)
-                                Rectangle()
-                                    .fill(Color.gray.opacity(0.3))
-                                    .frame(width: lineWidth)
-                                    // Position line center at treeLineLeading (under parent bullet center)
-                                    .offset(x: treeLineLeading - lineWidth / 2)
-                                    .padding(.top, -6 * scale)
-                                    .padding(.bottom, -4 * scale)
+                        // Each column is indentWidth (20*scale) wide
+                        // Tree line should be at treeLineLeading (11*scale) from left edge
+                        // This aligns with the center of the parent bullet at that depth level
+                        let lineWidth = max(1, scale)
+
+                        Color.clear
+                            .frame(width: indentWidth)
+                            .overlay(alignment: .topLeading) {
+                                if level < treeLines.count && treeLines[level] {
+                                    Rectangle()
+                                        .fill(Color.gray.opacity(0.3))
+                                        .frame(width: lineWidth, height: nil)
+                                        .frame(maxHeight: .infinity)
+                                        .offset(x: treeLineLeading - lineWidth / 2)
+                                        .padding(.top, -6 * scale)
+                                        .padding(.bottom, -4 * scale)
+                                }
                             }
-                        }
-                        .frame(width: indentWidth, alignment: .leading)
                     }
                 }
             }
