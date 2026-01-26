@@ -1419,7 +1419,7 @@ class OutlineNSTextField: NSTextField {
 }
 
 #else
-// iOS implementation with spacebar trackpad navigation across nodes
+// iOS implementation with UITextView for text wrapping
 import UIKit
 
 struct OutlineTextField: UIViewRepresentable {
@@ -1442,51 +1442,53 @@ struct OutlineTextField: UIViewRepresentable {
         Coordinator(self)
     }
 
-    func makeUIView(context: Context) -> TrackpadTextField {
-        let textField = TrackpadTextField()
-        textField.delegate = context.coordinator
-        textField.text = text
-        textField.font = UIFont.systemFont(ofSize: fontSize, weight: fontWeight)
-        textField.borderStyle = .none
-        textField.backgroundColor = .clear
-        textField.returnKeyType = .default
-        textField.autocorrectionType = .default
-        textField.autocapitalizationType = .sentences
+    func makeUIView(context: Context) -> WrappingTextView {
+        let textView = WrappingTextView()
+        textView.delegate = context.coordinator
+        textView.text = text
+        textView.font = UIFont.systemFont(ofSize: fontSize, weight: fontWeight)
+        textView.backgroundColor = .clear
+        textView.isScrollEnabled = false  // Critical for auto-sizing
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.autocorrectionType = .default
+        textView.autocapitalizationType = .sentences
+        textView.returnKeyType = .default
+
+        // Remove any extra padding
+        textView.contentInset = .zero
 
         // Store coordinator reference for callbacks
         let coordinator = context.coordinator
 
         // Set up navigation callbacks
-        textField.onNavigateUp = { [weak coordinator] in
+        textView.onNavigateUp = { [weak coordinator] in
             coordinator?.parent.onNavigateUp?()
         }
-        textField.onNavigateDown = { [weak coordinator] in
+        textView.onNavigateDown = { [weak coordinator] in
             coordinator?.parent.onNavigateDown?()
         }
-        textField.onReturn = { [weak coordinator] in
+        textView.onReturn = { [weak coordinator] in
             coordinator?.parent.onCreateSibling?()
         }
-        textField.onInsertLink = { [weak coordinator] url in
+        textView.onInsertLink = { [weak coordinator] url in
             coordinator?.parent.onInsertLink?(url)
         }
 
-        // Add target for text changes
-        textField.addTarget(coordinator, action: #selector(Coordinator.textFieldDidChange(_:)), for: .editingChanged)
-
-        return textField
+        return textView
     }
 
-    func updateUIView(_ textField: TrackpadTextField, context: Context) {
+    func updateUIView(_ textView: WrappingTextView, context: Context) {
         // Keep coordinator's parent reference up to date (critical for callbacks!)
         context.coordinator.parent = self
 
         // Update font
         let font = UIFont.systemFont(ofSize: fontSize, weight: fontWeight)
-        textField.font = font
+        textView.font = font
 
         // Check for markdown links and apply styling
         let links = LinkParser.parseMarkdownLinks(text)
-        if !links.isEmpty && textField.text != text {
+        if !links.isEmpty && textView.text != text {
             let attributedString = NSMutableAttributedString(string: text, attributes: [
                 .foregroundColor: UIColor.label,
                 .font: font
@@ -1512,64 +1514,68 @@ struct OutlineTextField: UIViewRepresentable {
                 }
             }
 
-            textField.attributedText = attributedString
-            textField.markdownLinks = links.map { (NSRange($0.range, in: text), $0.url) }
-        } else if textField.text != text {
+            textView.attributedText = attributedString
+            textView.markdownLinks = links.map { (NSRange($0.range, in: text), $0.url) }
+        } else if textView.text != text {
             // No links - use plain text
-            textField.text = text
-            textField.markdownLinks = []
+            textView.text = text
+            textView.markdownLinks = []
         }
 
         // Handle focus changes
         // Only call becomeFirstResponder for the focused field
         // DON'T call resignFirstResponder - let iOS handle it automatically
         // This keeps the keyboard visible during focus transitions between bullets
-        if isFocused && !textField.isFirstResponder {
+        if isFocused && !textView.isFirstResponder {
             DispatchQueue.main.async {
-                textField.becomeFirstResponder()
+                textView.becomeFirstResponder()
                 if cursorAtEnd {
                     // Position cursor at end
-                    let endPosition = textField.endOfDocument
-                    textField.selectedTextRange = textField.textRange(from: endPosition, to: endPosition)
+                    let endPosition = textView.endOfDocument
+                    textView.selectedTextRange = textView.textRange(from: endPosition, to: endPosition)
                 }
             }
         }
         // Note: We deliberately don't resignFirstResponder here
-        // When focus moves to a new text field, it automatically takes over
+        // When focus moves to a new text view, it automatically takes over
         // This prevents keyboard from dismissing during bullet creation
     }
 
-    class Coordinator: NSObject, UITextFieldDelegate {
+    class Coordinator: NSObject, UITextViewDelegate {
         var parent: OutlineTextField
-        private var lastCursorPosition: Int = 0
-        private var isTrackpadMode: Bool = false
 
         init(_ parent: OutlineTextField) {
             self.parent = parent
         }
 
-        @objc func textFieldDidChange(_ textField: UITextField) {
-            parent.text = textField.text ?? ""
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text ?? ""
+            // Invalidate intrinsic content size for height recalculation
+            textView.invalidateIntrinsicContentSize()
         }
 
-        func textFieldDidBeginEditing(_ textField: UITextField) {
+        func textViewDidBeginEditing(_ textView: UITextView) {
             parent.onFocusChange(true)
         }
 
-        func textFieldDidEndEditing(_ textField: UITextField) {
+        func textViewDidEndEditing(_ textView: UITextView) {
             parent.onFocusChange(false)
         }
 
-        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-            print("[DEBUG] textFieldShouldReturn called, onCreateSibling is \(parent.onCreateSibling == nil ? "nil" : "set")")
-            parent.onCreateSibling?()
-            return false
+        // Handle return key to create sibling
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            if text == "\n" {
+                print("[DEBUG] textView shouldChangeTextIn: newline detected, calling onCreateSibling")
+                parent.onCreateSibling?()
+                return false
+            }
+            return true
         }
     }
 }
 
-/// Custom UITextField that detects spacebar trackpad cursor movement at text boundaries
-class TrackpadTextField: UITextField, UITextDropDelegate, UIGestureRecognizerDelegate {
+/// Custom UITextView that supports text wrapping and spacebar trackpad navigation
+class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
     var onNavigateUp: (() -> Void)?
     var onNavigateDown: (() -> Void)?
     var onReturn: (() -> Void)?
@@ -1578,36 +1584,53 @@ class TrackpadTextField: UITextField, UITextDropDelegate, UIGestureRecognizerDel
     // Markdown links for tap handling
     var markdownLinks: [(range: NSRange, url: URL)] = []
 
+    // Spacebar trackpad navigation state
     private var lastSelectionStart: UITextPosition?
-    private var consecutiveLeftAttempts: Int = 0
-    private var consecutiveRightAttempts: Int = 0
+    private var consecutiveUpAttempts: Int = 0
+    private var consecutiveDownAttempts: Int = 0
     private var lastChangeTime: Date = Date()
-    private let navigationThreshold: Int = 2  // Number of attempts at boundary before navigating
-    private var isInContinuousNavigation: Bool = false  // After first nav, allow continuous navigation
+    private let navigationThreshold: Int = 2
+    private var isInContinuousNavigation: Bool = false
     private var lastNavigationDirection: Int = 0  // -1 for up, 1 for down, 0 for none
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupObservers()
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        setupView()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        setupObservers()
+        setupView()
     }
 
-    private func setupObservers() {
-        // Observe selection changes
-        addTarget(self, action: #selector(selectionDidChange), for: .editingChanged)
-
-        // Disable text drop to prevent drag data from being inserted as text
-        textDropDelegate = self
+    private func setupView() {
+        // Critical settings for auto-sizing
+        isScrollEnabled = false
+        textContainerInset = .zero
+        textContainer.lineFragmentPadding = 0
 
         // Add tap gesture for link handling
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tapGesture.delegate = self
         addGestureRecognizer(tapGesture)
     }
+
+    // MARK: - Intrinsic Content Size
+
+    override var intrinsicContentSize: CGSize {
+        // Calculate the size needed for the text content
+        let textWidth = bounds.width > 0 ? bounds.width : 200
+        let size = sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
+        return CGSize(width: UIView.noIntrinsicMetric, height: max(size.height, 22))
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Invalidate when layout changes to recalculate height
+        invalidateIntrinsicContentSize()
+    }
+
+    // MARK: - Link Handling
 
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         guard !markdownLinks.isEmpty else { return }
@@ -1618,21 +1641,27 @@ class TrackpadTextField: UITextField, UITextDropDelegate, UIGestureRecognizerDel
         }
     }
 
-    /// Check if a point is within a markdown link and return its URL
     private func urlAtPoint(_ point: CGPoint) -> URL? {
-        guard let text = text, !text.isEmpty else { return nil }
+        // Convert point to text container coordinates
+        let textContainerOffset = CGPoint(
+            x: textContainerInset.left,
+            y: textContainerInset.top
+        )
+        let locationInTextContainer = CGPoint(
+            x: point.x - textContainerOffset.x,
+            y: point.y - textContainerOffset.y
+        )
 
-        // Estimate character position from tap
-        let textRect = textRect(forBounds: bounds)
-        let relativeX = point.x - textRect.origin.x
-        let textWidth = max(textRect.width, 1.0)
-        let textCount = max(text.count, 1)
-        let charWidth = textWidth / CGFloat(textCount)
-        let estimatedCharIndex = Int(relativeX / charWidth)
+        // Get the character index at tap point
+        let charIndex = layoutManager.characterIndex(
+            for: locationInTextContainer,
+            in: textContainer,
+            fractionOfDistanceBetweenInsertionPoints: nil
+        )
 
-        // Check if estimated position falls within any link range
+        // Check if this index is within any link range
         for (range, url) in markdownLinks {
-            if estimatedCharIndex >= range.location && estimatedCharIndex < range.location + range.length {
+            if charIndex >= range.location && charIndex < range.location + range.length {
                 return url
             }
         }
@@ -1641,25 +1670,13 @@ class TrackpadTextField: UITextField, UITextDropDelegate, UIGestureRecognizerDel
 
     // MARK: - UIGestureRecognizerDelegate
 
-    /// Only recognize tap if it's on a link
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard !markdownLinks.isEmpty else { return false }
         let tapPoint = touch.location(in: self)
         return urlAtPoint(tapPoint) != nil
     }
 
-    // MARK: - UITextDropDelegate
-
-    /// Reject all drops - we handle drag-drop at the row level, not in the text field
-    func textDroppableView(_ textDroppableView: UIView & UITextDroppable, proposalForDrop drop: UITextDropRequest) -> UITextDropProposal {
-        return UITextDropProposal(operation: .cancel)
-    }
-
-    @objc private func selectionDidChange() {
-        // Reset attempts when text changes
-        consecutiveLeftAttempts = 0
-        consecutiveRightAttempts = 0
-    }
+    // MARK: - Selection Change Detection for Spacebar Trackpad Navigation
 
     override var selectedTextRange: UITextRange? {
         didSet {
@@ -1672,8 +1689,6 @@ class TrackpadTextField: UITextField, UITextDropDelegate, UIGestureRecognizerDel
 
         let currentPosition = selectedRange.start
         let now = Date()
-
-        // Only check if this is a rapid selection change (trackpad mode)
         let timeSinceLastChange = now.timeIntervalSince(lastChangeTime)
 
         // Reset continuous navigation mode after a pause
@@ -1682,57 +1697,52 @@ class TrackpadTextField: UITextField, UITextDropDelegate, UIGestureRecognizerDel
             lastNavigationDirection = 0
         }
 
-        // Check if cursor is at the beginning
-        if offset(from: beginningOfDocument, to: currentPosition) == 0 {
-            // Cursor is at the start
+        let textLength = text?.count ?? 0
+        let cursorOffset = offset(from: beginningOfDocument, to: currentPosition)
+
+        // Check if cursor is at the beginning (for up navigation)
+        if cursorOffset == 0 {
             if let last = lastSelectionStart,
                offset(from: beginningOfDocument, to: last) == 0,
                timeSinceLastChange < 0.3 {
-                consecutiveLeftAttempts += 1
+                consecutiveUpAttempts += 1
 
-                // In continuous mode going same direction, navigate immediately
-                // Otherwise require threshold
                 let threshold = (isInContinuousNavigation && lastNavigationDirection == -1) ? 1 : navigationThreshold
 
-                if consecutiveLeftAttempts >= threshold {
-                    // Navigate to previous node with cursor at end
+                if consecutiveUpAttempts >= threshold {
                     let generator = UIImpactFeedbackGenerator(style: .light)
                     generator.impactOccurred()
                     onNavigateUp?()
-                    consecutiveLeftAttempts = 0
+                    consecutiveUpAttempts = 0
                     isInContinuousNavigation = true
                     lastNavigationDirection = -1
                 }
             }
-            consecutiveRightAttempts = 0
+            consecutiveDownAttempts = 0
         }
-        // Check if cursor is at the end
-        else if offset(from: currentPosition, to: endOfDocument) == 0 {
-            // Cursor is at the end
+        // Check if cursor is at the end (for down navigation)
+        else if cursorOffset >= textLength {
             if let last = lastSelectionStart,
                offset(from: last, to: endOfDocument) == 0,
                timeSinceLastChange < 0.3 {
-                consecutiveRightAttempts += 1
+                consecutiveDownAttempts += 1
 
-                // In continuous mode going same direction, navigate immediately
-                // Otherwise require threshold
                 let threshold = (isInContinuousNavigation && lastNavigationDirection == 1) ? 1 : navigationThreshold
 
-                if consecutiveRightAttempts >= threshold {
-                    // Navigate to next node with cursor at start
+                if consecutiveDownAttempts >= threshold {
                     let generator = UIImpactFeedbackGenerator(style: .light)
                     generator.impactOccurred()
                     onNavigateDown?()
-                    consecutiveRightAttempts = 0
+                    consecutiveDownAttempts = 0
                     isInContinuousNavigation = true
                     lastNavigationDirection = 1
                 }
             }
-            consecutiveLeftAttempts = 0
+            consecutiveUpAttempts = 0
         } else {
-            // Cursor is in the middle, reset counters and continuous mode
-            consecutiveLeftAttempts = 0
-            consecutiveRightAttempts = 0
+            // Cursor is in the middle
+            consecutiveUpAttempts = 0
+            consecutiveDownAttempts = 0
             isInContinuousNavigation = false
             lastNavigationDirection = 0
         }
@@ -1741,17 +1751,8 @@ class TrackpadTextField: UITextField, UITextDropDelegate, UIGestureRecognizerDel
         lastChangeTime = now
     }
 
-    // Handle keyboard return key
-    override func insertText(_ text: String) {
-        if text == "\n" {
-            print("[DEBUG] TrackpadTextField.insertText: newline detected, calling onReturn")
-            onReturn?()
-            return
-        }
-        super.insertText(text)
-    }
+    // MARK: - Paste Handling
 
-    // Handle paste - detect URLs for smart link conversion
     override func paste(_ sender: Any?) {
         guard let text = UIPasteboard.general.string else {
             super.paste(sender)
