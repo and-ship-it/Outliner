@@ -185,6 +185,16 @@ struct ContentView: View {
         }
         #if os(macOS)
         .background(WindowAccessor(windowId: windowId, title: tabTitle, isAlwaysOnTop: isAlwaysOnTop))
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            // When any window becomes key (active), ensure focus is refreshed
+            guard let doc = WindowManager.shared.document else { return }
+
+            // Refresh focus to ensure cursor appears after tab close
+            if doc.focusedNodeId != nil {
+                doc.focusVersion += 1
+                print("[Focus] Window became key, refreshing focus (version: \(doc.focusVersion))")
+            }
+        }
         #endif
     }
 
