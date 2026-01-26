@@ -139,6 +139,24 @@ struct OutlineCommands: Commands {
             Divider()
 
             Toggle("Word Autocomplete", isOn: $autocompleteEnabled)
+
+            Divider()
+
+            // Week start day setting
+            Menu("Week Starts On") {
+                ForEach(WeekStartDay.allCases) { day in
+                    Button(action: {
+                        UserDefaults.standard.set(day.rawValue, forKey: "weekStartDay")
+                        // Note: This will take effect on next app launch
+                    }) {
+                        if iCloudManager.shared.weekStartDay == day {
+                            Text("\(day.name) ✓")
+                        } else {
+                            Text(day.name)
+                        }
+                    }
+                }
+            }
         }
 
         // View menu additions

@@ -8,6 +8,23 @@
 import Foundation
 import Combine
 
+/// Day the week starts on
+enum WeekStartDay: Int, CaseIterable, Identifiable {
+    case sunday = 1
+    case monday = 2
+    case saturday = 7
+
+    var id: Int { rawValue }
+
+    var name: String {
+        switch self {
+        case .sunday: return "Sunday"
+        case .monday: return "Monday"
+        case .saturday: return "Saturday"
+        }
+    }
+}
+
 /// Manages iCloud file storage for the single-document app
 @Observable
 @MainActor
@@ -21,11 +38,13 @@ final class iCloudManager {
     private(set) var isLoading: Bool = false
     private(set) var lastError: Error?
 
+    /// Current week's filename (e.g., "2025-Jan-W05.md")
+    private(set) var currentWeekFileName: String = ""
+
     // MARK: - Constants
 
     private let containerIdentifier = "iCloud.computer.daydreamlab.Lineout-ly"
     private let folderName = "Lineout-ly"
-    private let mainFileName = "main.md"
     private let trashFolderName = ".trash"
 
     // MARK: - Auto-Save
@@ -44,7 +63,71 @@ final class iCloudManager {
     }
 
     var mainFileURL: URL? {
-        appFolderURL?.appendingPathComponent(mainFileName)
+        guard !currentWeekFileName.isEmpty else { return nil }
+        return appFolderURL?.appendingPathComponent(currentWeekFileName)
+    }
+
+    // MARK: - Week Calculation
+
+    /// Get the week start day from UserDefaults (default: Monday)
+    var weekStartDay: WeekStartDay {
+        let rawValue = UserDefaults.standard.integer(forKey: "weekStartDay")
+        return WeekStartDay(rawValue: rawValue) ?? .monday
+    }
+
+    /// Calculate the filename for a given date based on week start setting
+    /// Format: "2025-Jan-W05.md"
+    func weekFileName(for date: Date, weekStart: WeekStartDay) -> String {
+        var calendar = Calendar.current
+        calendar.firstWeekday = weekStart.rawValue
+
+        let year = calendar.component(.year, from: date)
+        let weekOfYear = calendar.component(.weekOfYear, from: date)
+
+        let monthFormatter = DateFormatter()
+        monthFormatter.dateFormat = "MMM"
+
+        // Get the first day of the week to determine the month
+        let weekday = calendar.component(.weekday, from: date)
+        let daysToSubtract = (weekday - weekStart.rawValue + 7) % 7
+        let firstDayOfWeek = calendar.date(byAdding: .day, value: -daysToSubtract, to: date) ?? date
+        let monthName = monthFormatter.string(from: firstDayOfWeek)
+
+        return String(format: "%d-%@-W%02d.md", year, monthName, weekOfYear)
+    }
+
+    /// Get current week's filename
+    func currentWeekFile() -> String {
+        weekFileName(for: Date(), weekStart: weekStartDay)
+    }
+
+    /// Update the current week filename (call on app launch and when settings change)
+    func updateCurrentWeekFileName() {
+        currentWeekFileName = currentWeekFile()
+        print("[iCloud] Current week file: \(currentWeekFileName)")
+    }
+
+    /// Check if a new week has started (compare against loaded file)
+    func isNewWeek(comparedTo loadedFileName: String) -> Bool {
+        let currentFile = currentWeekFile()
+        return currentFile != loadedFileName
+    }
+
+    /// List all week files in the app folder (for archive viewing)
+    func listAllWeekFiles() -> [String] {
+        guard let appFolder = appFolderURL else { return [] }
+
+        do {
+            let files = try FileManager.default.contentsOfDirectory(atPath: appFolder.path)
+            return files
+                .filter { $0.hasSuffix(".md") && !$0.hasPrefix(".") }
+                .sorted()
+                .reversed() // Most recent first
+                .map { $0 }
+        } catch {
+            print("[iCloud] Error listing week files: \(error)")
+            return []
+        }
     }
 
     var trashFolderURL: URL? {
@@ -119,6 +202,9 @@ final class iCloudManager {
 
     /// Setup folder structure on first launch
     func setupOnFirstLaunch() async throws {
+        // Update week filename first
+        updateCurrentWeekFileName()
+
         guard let appFolder = appFolderURL else {
             throw iCloudError.containerNotAvailable
         }
@@ -135,11 +221,12 @@ final class iCloudManager {
             try fileManager.createDirectory(at: trashFolder, withIntermediateDirectories: true)
         }
 
-        // Create main file if needed
+        // Create current week's file if needed
         if let mainFile = mainFileURL, !fileManager.fileExists(atPath: mainFile.path) {
             // Create empty document
             let emptyContent = "- \n"
             try emptyContent.write(to: mainFile, atomically: true, encoding: .utf8)
+            print("[iCloud] Created new week file: \(currentWeekFileName)")
         }
     }
 
@@ -256,11 +343,19 @@ final class iCloudManager {
     }
 
     var localMainFileURL: URL {
-        localFallbackURL.appendingPathComponent(mainFileName)
+        guard !currentWeekFileName.isEmpty else {
+            return localFallbackURL.appendingPathComponent("temp.md")
+        }
+        return localFallbackURL.appendingPathComponent(currentWeekFileName)
     }
 
     /// Load from local storage if iCloud is unavailable
     func loadLocalDocument() throws -> OutlineDocument {
+        // Ensure week filename is set
+        if currentWeekFileName.isEmpty {
+            updateCurrentWeekFileName()
+        }
+
         let fileManager = FileManager.default
 
         // Create local folder if needed
@@ -268,15 +363,16 @@ final class iCloudManager {
             try fileManager.createDirectory(at: localFallbackURL, withIntermediateDirectories: true)
         }
 
-        // Create or load main file
+        // Create or load current week's file
         if fileManager.fileExists(atPath: localMainFileURL.path) {
             let markdown = try String(contentsOf: localMainFileURL, encoding: .utf8)
             let root = MarkdownCodec.parse(markdown)
             return OutlineDocument(root: root)
         } else {
-            // Create empty document
+            // Create empty document for new week
             let emptyContent = "- \n"
             try emptyContent.write(to: localMainFileURL, atomically: true, encoding: .utf8)
+            print("[iCloud] Created new local week file: \(currentWeekFileName)")
             return OutlineDocument.createEmpty()
         }
     }

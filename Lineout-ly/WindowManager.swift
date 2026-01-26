@@ -271,6 +271,9 @@ final class WindowManager {
 
     // MARK: - Document Loading
 
+    /// Pending auto-zoom node for first tab on launch
+    private(set) var autoZoomNodeId: UUID?
+
     func loadDocumentIfNeeded() async {
         guard document == nil else { return }
 
@@ -296,9 +299,18 @@ final class WindowManager {
             doc.autoSaveEnabled = true
             self.document = doc
             print("[WindowManager] Document loaded, nodes: \(doc.root.children.count)")
+            print("[WindowManager] Current week file: \(icloud.currentWeekFileName)")
 
-            // Restore previous session if enabled
-            SessionManager.shared.restoreSessionIfNeeded(document: doc)
+            // Auto-zoom on launch: create new bullet and prepare to zoom into it
+            let newNode = OutlineNode(title: "")
+            doc.root.addChild(newNode, at: 0)  // Insert at top
+            autoZoomNodeId = newNode.id
+            doc.focusedNodeId = newNode.id
+            print("[WindowManager] Auto-zoom: created new node \(newNode.id.uuidString.prefix(8))")
+
+            // Trigger save for the new node
+            doc.autoSaveEnabled = true
+            icloud.scheduleAutoSave(for: doc)
 
         } catch {
             print("[WindowManager] Load error: \(error)")
@@ -306,6 +318,13 @@ final class WindowManager {
         }
 
         isLoading = false
+    }
+
+    /// Consume the auto-zoom node ID (call once from first tab)
+    func consumeAutoZoomNodeId() -> UUID? {
+        let id = autoZoomNodeId
+        autoZoomNodeId = nil
+        return id
     }
 
     func reloadDocument() async {

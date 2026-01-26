@@ -48,9 +48,13 @@ struct ContentView: View {
     /// Tab title based on zoom state
     private var tabTitle: String {
         guard let document = WindowManager.shared.document else { return "Lineout" }
+
+        // Get week name for home title (e.g., "2025-Jan-W05")
+        let weekName = iCloudManager.shared.currentWeekFileName.replacingOccurrences(of: ".md", with: "")
+
         guard let zoomId = zoomedNodeId,
               let zoomedNode = document.root.find(id: zoomId) else {
-            return "Home"
+            return weekName.isEmpty ? "Home" : weekName
         }
         // Use the zoomed node's title, or "Untitled" if empty
         let title = zoomedNode.title.isEmpty ? "Untitled" : zoomedNode.title
@@ -78,8 +82,31 @@ struct ContentView: View {
         .task {
             await WindowManager.shared.loadDocumentIfNeeded()
 
-            // Check for pending state from session restore queue first
-            if !WindowManager.shared.pendingZoomQueue.isEmpty {
+            // Check for auto-zoom on launch (new bullet created at app start)
+            if let autoZoomId = WindowManager.shared.consumeAutoZoomNodeId() {
+                print("[Launch] Auto-zoom into new node: \(autoZoomId.uuidString.prefix(8))")
+                setZoomedNodeId(autoZoomId)
+                // Focus is already set by WindowManager
+                collapseStateInitialized = true  // Start fresh, no collapse state
+            }
+            // Check for pending zoom from Cmd+T (new tab from current)
+            else if let pending = WindowManager.shared.pendingZoom {
+                print("[Session] Tab \(windowId) using pendingZoom: \(pending)")
+                setZoomedNodeId(pending)
+                // Set focus to first child of zoomed node so cursor is visible and functional
+                if let doc = WindowManager.shared.document,
+                   let zoomedNode = doc.root.find(id: pending) {
+                    if let firstChild = zoomedNode.children.first {
+                        doc.focusedNodeId = firstChild.id
+                    } else {
+                        // If no children, focus the zoomed node itself
+                        doc.focusedNodeId = pending
+                    }
+                }
+                WindowManager.shared.pendingZoom = nil
+            }
+            // Legacy: Check for pending state from session restore queue
+            else if !WindowManager.shared.pendingZoomQueue.isEmpty {
                 // Pop zoom state
                 let zoomId = WindowManager.shared.popPendingZoom()
                 print("[Session] Tab \(windowId) popped zoom: \(zoomId?.uuidString ?? "nil")")
@@ -108,24 +135,6 @@ struct ContentView: View {
                     WindowManager.shared.registerTabAlwaysOnTop(windowId: windowId, isAlwaysOnTop: restoredAlwaysOnTop)
                     print("[Session] Tab \(windowId) popped alwaysOnTop: \(restoredAlwaysOnTop)")
                 }
-            }
-            // Then check for pending zoom from Cmd+T (new tab from current)
-            else if let pending = WindowManager.shared.pendingZoom {
-                print("[Session] Tab \(windowId) using pendingZoom: \(pending)")
-                setZoomedNodeId(pending)
-                // Set focus to first child of zoomed node so cursor is visible and functional
-                if let doc = WindowManager.shared.document,
-                   let zoomedNode = doc.root.find(id: pending) {
-                    if let firstChild = zoomedNode.children.first {
-                        doc.focusedNodeId = firstChild.id
-                    } else {
-                        // If no children, focus the zoomed node itself
-                        doc.focusedNodeId = pending
-                    }
-                }
-                WindowManager.shared.pendingZoom = nil
-
-                // New tabs start with all expanded (inherits default font size and not always-on-top)
             }
 
             // If no collapse state was restored, initialize from document

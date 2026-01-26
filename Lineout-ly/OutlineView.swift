@@ -295,50 +295,33 @@ struct OutlineView: View {
         selectedResultIndex = 0
     }
 
-    /// Breadcrumbs shown at the bottom when zoomed
+    /// Simplified navigation bar shown at the bottom when zoomed
+    /// Just shows Home button - no breadcrumb trail
     private var bottomBreadcrumbs: some View {
-        HStack(spacing: 4 * scale) {
-            // Home button
+        HStack(spacing: 8 * scale) {
+            // Home button - go back to root
             Button(action: {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    zoomedNodeId = nil
-                }
+                zoomedNodeId = nil
             }) {
-                Image(systemName: "house")
-                    .font(.system(size: 11 * scale))
+                HStack(spacing: 4 * scale) {
+                    Image(systemName: "house")
+                        .font(.system(size: 11 * scale))
+                    Text("Home")
+                        .font(.system(size: 11 * scale))
+                }
             }
             .buttonStyle(.plain)
-
-            // Breadcrumb path
-            ForEach(breadcrumbs) { node in
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9 * scale))
-
-                Button(action: {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        zoomedNodeId = node.id
-                    }
-                }) {
-                    Text(node.title.isEmpty ? "Untitled" : String(node.title.prefix(15)))
-                        .font(.system(size: 11 * scale))
-                        .lineLimit(1)
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Current zoomed node
-            if let zoomed = zoomedNode {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9 * scale))
-                Text(zoomed.title.isEmpty ? "Untitled" : String(zoomed.title.prefix(15)))
-                    .font(.system(size: 11 * scale, weight: .medium))
-                    .lineLimit(1)
-            }
+            .keyboardShortcut(.escape, modifiers: [])
 
             Spacer()
+
+            // Week indicator (shows current file name)
+            Text(iCloudManager.shared.currentWeekFileName.replacingOccurrences(of: ".md", with: ""))
+                .font(.system(size: 10 * scale))
+                .foregroundStyle(.tertiary)
         }
         .foregroundStyle(.secondary.opacity(0.7))
-        .padding(.horizontal, 32)  // Fixed padding to match content
+        .padding(.horizontal, 32)
         .padding(.top, 12)
         .padding(.bottom, 16)
         .background(Color.textBackgroundColor)
