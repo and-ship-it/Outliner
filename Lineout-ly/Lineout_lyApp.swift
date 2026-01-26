@@ -11,12 +11,32 @@ import AppKit
 #endif
 
 #if os(macOS)
+/// Singleton to hold openWindow action reference
+class WindowOpener {
+    static let shared = WindowOpener()
+    var openWindowAction: (() -> Void)?
+}
+
 /// Open a new window
 private func openNewWindow() {
     // Clear pending zoom so new window starts at root
     WindowManager.shared.pendingZoom = nil
-    // Trigger new window - this works with WindowGroup
-    NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+
+    // Check if there are any visible windows
+    let hasVisibleWindows = NSApp.windows.contains { $0.isVisible && !$0.isMiniaturized }
+
+    if hasVisibleWindows {
+        // Add a new tab to existing window
+        NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+    } else {
+        // No windows - use the stored openWindow action
+        if let openAction = WindowOpener.shared.openWindowAction {
+            openAction()
+        } else {
+            // Fallback: activate app and hope WindowGroup creates a window
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
 }
 #endif
 
@@ -501,8 +521,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Reopen main window when dock icon is clicked and no windows are open
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
-            // No visible windows, create a new one
-            NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+            // No visible windows, create a new one using stored action
+            if let openAction = WindowOpener.shared.openWindowAction {
+                openAction()
+            } else {
+                // Fallback
+                NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+            }
         }
         return true
     }

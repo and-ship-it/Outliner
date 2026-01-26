@@ -15,6 +15,11 @@ struct ContentView: View {
     /// Unique ID for this window instance
     @State private var windowId = UUID()
 
+    #if os(macOS)
+    /// Environment action to open new windows
+    @Environment(\.openWindow) private var openWindow
+    #endif
+
     /// Zoomed node ID for this window (persisted per scene/window)
     @SceneStorage("zoomedNodeId") private var zoomedNodeIdString: String = ""
 
@@ -182,6 +187,13 @@ struct ContentView: View {
         .onAppear {
             // Register this tab with WindowManager
             WindowManager.shared.registerTab(windowId: windowId)
+
+            #if os(macOS)
+            // Store openWindow action for use when no windows exist
+            WindowOpener.shared.openWindowAction = {
+                openWindow(id: "main")
+            }
+            #endif
         }
         #if os(macOS)
         .background(WindowAccessor(windowId: windowId, title: tabTitle, isAlwaysOnTop: isAlwaysOnTop))
