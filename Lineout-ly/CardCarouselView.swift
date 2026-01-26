@@ -392,9 +392,9 @@ struct CardPreviewView: View {
     /// Is this the home card?
     private var isHome: Bool { zoomId == nil }
 
-    /// Get visible nodes with depth, respecting collapsed state
-    private var visibleNodesWithDepth: [(node: OutlineNode, depth: Int)] {
-        var result: [(OutlineNode, Int)] = []
+    /// Get visible nodes with depth and tree lines, respecting collapsed state
+    private var visibleNodesWithDepth: [(node: OutlineNode, depth: Int, treeLines: [Bool])] {
+        var result: [(OutlineNode, Int, [Bool])] = []
         let rootNode: OutlineNode
         if let id = zoomId, let node = document.root.find(id: id) {
             rootNode = node
@@ -402,12 +402,28 @@ struct CardPreviewView: View {
             rootNode = document.root
         }
 
+        func calculateTreeLines(for node: OutlineNode) -> [Bool] {
+            var lines: [Bool] = []
+            var current = node
+            while let parent = current.parent {
+                // Stop at zoom root or document root
+                if parent.id == zoomId || parent.isRoot {
+                    break
+                }
+                let hasSiblingsBelow = current.nextSibling != nil
+                lines.insert(hasSiblingsBelow, at: 0)
+                current = parent
+            }
+            return lines
+        }
+
         func traverse(_ node: OutlineNode, depth: Int) {
             // Limit to prevent too many items
             guard result.count < 10 else { return }
 
             for child in node.children {
-                result.append((child, depth))
+                let treeLines = calculateTreeLines(for: child)
+                result.append((child, depth, treeLines))
                 // Only traverse children if not collapsed
                 if !collapsedNodeIds.contains(child.id) && !child.children.isEmpty {
                     traverse(child, depth: depth + 1)
@@ -448,14 +464,33 @@ struct CardPreviewView: View {
                 ForEach(Array(visibleNodesWithDepth.enumerated()), id: \.element.node.id) { _, item in
                     let node = item.node
                     let depth = item.depth
+                    let treeLines = item.treeLines
                     let hasChildren = !node.children.isEmpty
                     let isCollapsed = collapsedNodeIds.contains(node.id)
 
-                    HStack(alignment: .top, spacing: 6) {
-                        // Indentation
+                    // Preview row sizing constants
+                    let indentWidth: CGFloat = 12
+                    let bulletSize: CGFloat = 10
+                    let treeLineOffset: CGFloat = bulletSize / 2  // Center line under bullet
+
+                    HStack(alignment: .top, spacing: 0) {
+                        // Tree lines with indentation
                         if depth > 0 {
-                            Spacer()
-                                .frame(width: CGFloat(depth) * 12)
+                            HStack(spacing: 0) {
+                                ForEach(0..<depth, id: \.self) { level in
+                                    ZStack(alignment: .leading) {
+                                        if level < treeLines.count && treeLines[level] {
+                                            Rectangle()
+                                                .fill(Color.gray.opacity(0.3))
+                                                .frame(width: 1)
+                                                .offset(x: treeLineOffset - 0.5)
+                                                .padding(.top, -4)
+                                                .padding(.bottom, -4)
+                                        }
+                                    }
+                                    .frame(width: indentWidth, alignment: .leading)
+                                }
+                            }
                         }
 
                         // Chevron or bullet
@@ -463,14 +498,14 @@ struct CardPreviewView: View {
                             Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                                 .font(.system(size: 8, weight: .semibold))
                                 .foregroundColor(.secondary.opacity(0.6))
-                                .frame(width: 10, height: 10)
-                                .padding(.top, 4)
+                                .frame(width: bulletSize, height: bulletSize)
+                                .padding(.top, 3)
                         } else {
                             Circle()
                                 .fill(node.isTaskCompleted ? Color.gray.opacity(0.4) : Color.secondary.opacity(0.5))
                                 .frame(width: 5, height: 5)
-                                .padding(.top, 5)
-                                .padding(.horizontal, 2.5)
+                                .frame(width: bulletSize, height: bulletSize)
+                                .padding(.top, 3)
                         }
 
                         Text(node.title.isEmpty ? "Empty" : node.title)
@@ -478,6 +513,7 @@ struct CardPreviewView: View {
                             .foregroundColor(node.title.isEmpty ? .secondary : .primary)
                             .lineLimit(1)
                             .strikethrough(node.isTaskCompleted)
+                            .padding(.leading, 4)
 
                         Spacer()
                     }
@@ -652,14 +688,41 @@ struct MacOSCardPreviewView: View {
 
     private var isHome: Bool { zoomId == nil }
 
-    private var previewChildren: [OutlineNode] {
+    /// Get visible nodes with depth and tree lines for preview
+    private var previewNodesWithDepth: [(node: OutlineNode, depth: Int, treeLines: [Bool])] {
+        var result: [(OutlineNode, Int, [Bool])] = []
         let rootNode: OutlineNode
         if let id = zoomId, let node = document.root.find(id: id) {
             rootNode = node
         } else {
             rootNode = document.root
         }
-        return Array(rootNode.children.prefix(4))
+
+        func calculateTreeLines(for node: OutlineNode) -> [Bool] {
+            var lines: [Bool] = []
+            var current = node
+            while let parent = current.parent {
+                if parent.id == zoomId || parent.isRoot { break }
+                let hasSiblingsBelow = current.nextSibling != nil
+                lines.insert(hasSiblingsBelow, at: 0)
+                current = parent
+            }
+            return lines
+        }
+
+        func traverse(_ node: OutlineNode, depth: Int) {
+            guard result.count < 4 else { return }
+            for child in node.children {
+                let treeLines = calculateTreeLines(for: child)
+                result.append((child, depth, treeLines))
+                if !collapsedNodeIds.contains(child.id) && !child.children.isEmpty {
+                    traverse(child, depth: depth + 1)
+                }
+            }
+        }
+
+        traverse(rootNode, depth: 0)
+        return result
     }
 
     var body: some View {
@@ -683,21 +746,50 @@ struct MacOSCardPreviewView: View {
             Divider()
                 .padding(.horizontal, 8)
 
-            // Preview content
+            // Preview content with tree lines
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(previewChildren) { node in
-                    HStack(spacing: 6) {
+                ForEach(Array(previewNodesWithDepth.enumerated()), id: \.element.node.id) { _, item in
+                    let node = item.node
+                    let depth = item.depth
+                    let treeLines = item.treeLines
+                    let indentWidth: CGFloat = 8
+                    let bulletSize: CGFloat = 8
+                    let treeLineOffset: CGFloat = bulletSize / 2
+
+                    HStack(spacing: 0) {
+                        // Tree lines with indentation
+                        if depth > 0 {
+                            HStack(spacing: 0) {
+                                ForEach(0..<depth, id: \.self) { level in
+                                    ZStack(alignment: .leading) {
+                                        if level < treeLines.count && treeLines[level] {
+                                            Rectangle()
+                                                .fill(Color.gray.opacity(0.3))
+                                                .frame(width: 1)
+                                                .offset(x: treeLineOffset - 0.5)
+                                                .padding(.top, -3)
+                                                .padding(.bottom, -3)
+                                        }
+                                    }
+                                    .frame(width: indentWidth, alignment: .leading)
+                                }
+                            }
+                        }
+
                         Circle()
                             .fill(Color.secondary.opacity(0.5))
                             .frame(width: 4, height: 4)
+                            .frame(width: bulletSize, height: bulletSize)
+
                         Text(node.title.isEmpty ? "Empty" : node.title)
                             .font(.system(size: 10))
                             .lineLimit(1)
                             .foregroundColor(node.title.isEmpty ? .secondary : .primary)
+                            .padding(.leading, 4)
                     }
                 }
 
-                if previewChildren.isEmpty {
+                if previewNodesWithDepth.isEmpty {
                     Text("No items")
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)

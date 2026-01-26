@@ -458,18 +458,20 @@ struct NodeRow: View {
             if effectiveDepth > 0 {
                 HStack(spacing: 0) {
                     ForEach(0..<effectiveDepth, id: \.self) { level in
-                        ZStack {
+                        ZStack(alignment: .leading) {
                             // Vertical line if there are more siblings at this level
                             if level < treeLines.count && treeLines[level] {
+                                let lineWidth = max(1, scale)
                                 Rectangle()
-                                    .fill(Color.gray.opacity(0.25))
-                                    .frame(width: max(1, scale))
-                                    .padding(.leading, treeLineLeading)
+                                    .fill(Color.gray.opacity(0.3))
+                                    .frame(width: lineWidth)
+                                    // Position line center at treeLineLeading (under parent bullet center)
+                                    .offset(x: treeLineLeading - lineWidth / 2)
                                     .padding(.top, -6 * scale)
                                     .padding(.bottom, -4 * scale)
                             }
                         }
-                        .frame(width: indentWidth)
+                        .frame(width: indentWidth, alignment: .leading)
                     }
                 }
             }
