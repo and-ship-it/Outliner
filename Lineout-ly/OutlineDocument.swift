@@ -517,6 +517,11 @@ final class OutlineDocument {
 
         print("[Document] Deleting empty auto-created node: \(node.title)")
 
+        // Track deletion for CloudKit sync
+        if !isApplyingRemoteChanges {
+            ChangeTracker.shared.markDeletedWithDescendants(node)
+        }
+
         // Remove the node (no undo for auto-cleanup)
         node.removeFromParent()
 
@@ -679,7 +684,8 @@ final class OutlineDocument {
                 for node in nodes {
                     root.addChild(node)
                 }
-                structureDidChange()
+                let allDirtyIds = Set(nodes.flatMap { $0.flattened().map(\.id) })
+                structureDidChange(dirtyNodeIds: allDirtyIds)
                 return nodes.first
             }
         }
@@ -727,7 +733,9 @@ final class OutlineDocument {
             }
 
             undoManager.setActionName("Paste")
-            structureDidChange()
+            var pastedDirtyIds = Set<UUID>([focused.id])
+            pastedDirtyIds.formUnion(childIds.map { $0 })
+            structureDidChange(dirtyNodeIds: pastedDirtyIds)
             return focused
         }
 
@@ -749,11 +757,12 @@ final class OutlineDocument {
                 root.addChild(node)
             }
             let nodeIds = nodes.map { $0.id }
+            let allDirtyIds = Set(nodes.flatMap { $0.flattened().map(\.id) })
             undoManager.registerUndo(withTarget: self) { doc in
                 doc.removeNodesForUndo(nodeIds)
             }
             undoManager.setActionName("Paste")
-            structureDidChange()
+            structureDidChange(dirtyNodeIds: allDirtyIds)
             return nodes.first
         }
 
@@ -768,13 +777,14 @@ final class OutlineDocument {
 
         // Register undo - remove all inserted nodes
         let nodeIds = nodes.map { $0.id }
+        let allDirtyIds = Set(nodes.flatMap { $0.flattened().map(\.id) })
         undoManager.registerUndo(withTarget: self) { doc in
             doc.removeNodesForUndo(nodeIds)
             doc.focusedNodeId = previousFocusId
         }
         undoManager.setActionName("Paste")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: allDirtyIds)
         return nodes.first
     }
 
@@ -788,11 +798,12 @@ final class OutlineDocument {
                 root.addChild(node, at: i)
             }
             let nodeIds = nodes.map { $0.id }
+            let allDirtyIds = Set(nodes.flatMap { $0.flattened().map(\.id) })
             undoManager.registerUndo(withTarget: self) { doc in
                 doc.removeNodesForUndo(nodeIds)
             }
             undoManager.setActionName("Paste")
-            structureDidChange()
+            structureDidChange(dirtyNodeIds: allDirtyIds)
             return nodes.first
         }
 
@@ -807,13 +818,14 @@ final class OutlineDocument {
 
         // Register undo - remove all inserted nodes
         let nodeIds = nodes.map { $0.id }
+        let allDirtyIds = Set(nodes.flatMap { $0.flattened().map(\.id) })
         undoManager.registerUndo(withTarget: self) { doc in
             doc.removeNodesForUndo(nodeIds)
             doc.focusedNodeId = previousFocusId
         }
         undoManager.setActionName("Paste")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: allDirtyIds)
         return nodes.first
     }
 
@@ -831,13 +843,14 @@ final class OutlineDocument {
 
         // Register undo - remove all inserted nodes
         let nodeIds = nodes.map { $0.id }
+        let allDirtyIds = Set(nodes.flatMap { $0.flattened().map(\.id) })
         undoManager.registerUndo(withTarget: self) { doc in
             doc.removeNodesForUndo(nodeIds)
             doc.focusedNodeId = previousFocusId
         }
         undoManager.setActionName("Paste")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: allDirtyIds)
         return nodes.first
     }
 
@@ -845,6 +858,9 @@ final class OutlineDocument {
     private func removeNodesForUndo(_ nodeIds: [UUID]) {
         for nodeId in nodeIds {
             if let node = root.find(id: nodeId) {
+                if !isApplyingRemoteChanges {
+                    ChangeTracker.shared.markDeletedWithDescendants(node)
+                }
                 node.removeFromParent()
             }
         }
@@ -1060,6 +1076,9 @@ final class OutlineDocument {
         // Clean up linked Apple Reminders before deletion (node + all descendants)
         cleanupReminders(for: focused)
 
+        // If deleting a metadata child (note/link), sync the cleared field to its parent's reminder
+        cleanupMetadataChild(focused)
+
         // Move to trash before deleting (includes all children)
         TrashBin.shared.trash(focused)
 
@@ -1241,6 +1260,7 @@ final class OutlineDocument {
         // Clean up linked Apple Reminders and delete
         for node in nodesToDelete {
             cleanupReminders(for: node)
+            cleanupMetadataChild(node)
             TrashBin.shared.trash(node)
             // Track deletion for CloudKit sync
             if !isApplyingRemoteChanges {
@@ -1283,6 +1303,11 @@ final class OutlineDocument {
     private func deleteNodeForUndo(_ nodeId: UUID, restoreFocusTo focusId: UUID?) {
         guard let node = root.find(id: nodeId) else { return }
 
+        // Track deletion for CloudKit sync
+        if !isApplyingRemoteChanges {
+            ChangeTracker.shared.markDeletedWithDescendants(node)
+        }
+
         // Save state for redo
         let nodeCopy = node.deepCopy()
         let parentId = node.parent?.id
@@ -1320,6 +1345,9 @@ final class OutlineDocument {
         let safeIndex = min(index, parent.children.count)
         parent.addChild(nodeCopy, at: safeIndex)
 
+        // Mark restored node and descendants as dirty for CloudKit sync
+        let restoredIds = Set(nodeCopy.flattened().map(\.id) + [nodeCopy.id])
+
         // Save state for redo
         let currentFocusId = focusedNodeId
 
@@ -1335,7 +1363,7 @@ final class OutlineDocument {
             doc.deleteNodeForUndo(nodeCopy.id, restoreFocusTo: currentFocusId)
         }
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: restoredIds)
     }
 
     // MARK: - Node Movement
@@ -1490,6 +1518,8 @@ final class OutlineDocument {
 
         guard !restoreInfos.isEmpty else { return }
 
+        let movedIds = Set(restoreInfos.map(\.nodeId))
+
         // Register undo for all moves
         undoManager.registerUndo(withTarget: self) { doc in
             // Restore in reverse order
@@ -1499,7 +1529,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("Indent")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: movedIds)
     }
 
     func outdent() {
@@ -1577,6 +1607,8 @@ final class OutlineDocument {
 
         guard !restoreInfos.isEmpty else { return }
 
+        let movedIds = Set(restoreInfos.map(\.nodeId))
+
         // Register undo for all moves
         undoManager.registerUndo(withTarget: self) { doc in
             // Restore in reverse order
@@ -1586,7 +1618,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("Outdent")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: movedIds)
     }
 
     /// Move a node to be a sibling after a target node (for iOS drag-drop)
@@ -1710,6 +1742,21 @@ final class OutlineDocument {
         }
     }
 
+    /// When deleting a metadata child (note/link), sync the cleared field back to the parent's reminder
+    /// so the inbound sync doesn't recreate it.
+    private func cleanupMetadataChild(_ node: OutlineNode) {
+        guard node.reminderChildType != nil,
+              let parent = node.parent,
+              parent.reminderIdentifier != nil,
+              !ReminderSyncEngine.shared.isApplyingReminderChanges else { return }
+        // After the node is removed from parent, sync will see no note/link child and clear the field
+        // We schedule this to run after removeFromParent() completes
+        let parentNode = parent
+        DispatchQueue.main.async {
+            ReminderSyncEngine.shared.syncMetadataChildrenToReminder(parentNode)
+        }
+    }
+
     // MARK: - Reminder Reschedule Hook
 
     /// After moving a node (indent, outdent, drag-drop), check if its reminder
@@ -1775,7 +1822,7 @@ final class OutlineDocument {
             doc.moveNodeForUndo(nodeId, toParentId: currentParentId, atIndex: currentIndex)
         }
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: [nodeId])
     }
 }
 

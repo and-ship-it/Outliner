@@ -45,9 +45,6 @@ struct ContentView: View {
     /// Per-tab collapsed node IDs (separate from document's node.isCollapsed)
     @State private var collapsedNodeIds: Set<UUID> = []
 
-    /// Whether collapse state has been initialized
-    @State private var collapseStateInitialized: Bool = false
-
     /// Navigation history for tab switcher (iOS and macOS)
     @State private var navigationHistory = NavigationHistoryManager()
 
@@ -113,23 +110,6 @@ struct ContentView: View {
                 zoomedNodeIdString = ""
             }
 
-            // Initialize collapse state: collapse ALL nodes with children for faster loading
-            if !collapseStateInitialized {
-                if let doc = WindowManager.shared.document {
-                    // Collapse all nodes that have children
-                    var initialCollapsed = Set<UUID>()
-                    for node in doc.root.flattened() {
-                        if node.hasChildren {
-                            initialCollapsed.insert(node.id)
-                        }
-                    }
-                    collapsedNodeIds = initialCollapsed
-                    WindowManager.shared.registerTabCollapseState(windowId: windowId, collapsedNodeIds: initialCollapsed)
-                    print("[Launch] Collapsed all \(initialCollapsed.count) nodes with children")
-                }
-                collapseStateInitialized = true
-            }
-
             // Register initial font size and always-on-top state
             WindowManager.shared.registerTabFontSize(windowId: windowId, fontSize: fontSize)
             WindowManager.shared.registerTabAlwaysOnTop(windowId: windowId, isAlwaysOnTop: isAlwaysOnTop)
@@ -137,16 +117,22 @@ struct ContentView: View {
             // Ensure date structure exists for current week
             if let doc = WindowManager.shared.document {
                 DateStructureManager.shared.ensureDateNodes(in: doc)
-                // Force date nodes to be expanded (they should always be visible)
-                let weekDates = DateStructureManager.shared.currentWeekDates()
-                for date in weekDates {
-                    collapsedNodeIds.remove(DateStructureManager.deterministicUUID(for: date))
+
+                // Collapse ALL nodes with children for fast launch
+                var initialCollapsed = Set<UUID>()
+                for node in doc.root.flattened() {
+                    if node.hasChildren {
+                        initialCollapsed.insert(node.id)
+                    }
                 }
+                collapsedNodeIds = initialCollapsed
+                WindowManager.shared.registerTabCollapseState(windowId: windowId, collapsedNodeIds: initialCollapsed)
+                print("[Launch] Collapsed all \(initialCollapsed.count) nodes with children")
             }
 
             // Set up CloudKit per-node sync engine (iOS 17+/macOS 14+)
             if #available(macOS 14.0, iOS 17.0, *) {
-                CloudKitSyncEngine.shared.setup()
+                await CloudKitSyncEngine.shared.setup()
 
                 // Run one-time migration from markdown to CloudKit
                 if let doc = WindowManager.shared.document {
@@ -219,7 +205,13 @@ struct ContentView: View {
             }
 
         case .active:
-            // CKSyncEngine handles push-based sync automatically
+            // Explicitly fetch CloudKit changes to catch missed push notifications
+            if #available(macOS 14.0, iOS 17.0, *) {
+                Task {
+                    await CloudKitSyncEngine.shared.fetchChanges()
+                }
+            }
+
             // Re-sync Reminders in case user made changes while backgrounded
             if ReminderSyncEngine.shared.isAuthorized {
                 Task {

@@ -33,7 +33,7 @@ final class CloudKitSyncEngine {
     // MARK: - Setup
 
     /// Initialize the sync engine. Call once after document is loaded.
-    func setup() {
+    func setup() async {
         guard !isSetUp else { return }
 
         let savedState = stateStore.load()
@@ -48,10 +48,8 @@ final class CloudKitSyncEngine {
         isSetUp = true
         print("[CKSync] Sync engine set up")
 
-        // Ensure zone exists
-        Task {
-            await ensureZoneExists()
-        }
+        // Ensure zone exists before any records are sent
+        await ensureZoneExists()
     }
 
     /// Create the zone if it doesn't exist yet
@@ -94,6 +92,20 @@ final class CloudKitSyncEngine {
         if !pendingChanges.isEmpty {
             engine.state.add(pendingRecordZoneChanges: pendingChanges)
             print("[CKSync] Enqueued \(pendingChanges.count) pending changes")
+        }
+    }
+
+    // MARK: - Fetch
+
+    /// Explicitly fetch changes from CloudKit (e.g., on foreground return)
+    func fetchChanges() async {
+        guard let engine = syncEngine else { return }
+
+        do {
+            try await engine.fetchChanges()
+            print("[CKSync] Fetched changes on demand")
+        } catch {
+            print("[CKSync] Fetch changes failed: \(error)")
         }
     }
 

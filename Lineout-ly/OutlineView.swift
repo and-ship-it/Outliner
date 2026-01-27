@@ -736,17 +736,31 @@ struct OutlineView: View {
                         .background(liquidGlassBackground())
                     }
 
-                    // Home button — go to root and collapse all
-                    Button {
-                        let generator = UIImpactFeedbackGenerator(style: .medium)
-                        generator.impactOccurred()
-                        goHomeAndCollapseAll()
-                    } label: {
-                        Image(systemName: "house")
-                            .font(.system(size: bottomBarIconSize, weight: .medium))
-                            .foregroundColor(.primary)
-                            .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
-                            .background(liquidGlassBackground(isCircle: true))
+                    // Home and Back buttons — only when zoomed in
+                    if zoomedNodeId != nil {
+                        Button {
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
+                            goHomeAndCollapseAll()
+                        } label: {
+                            Image(systemName: "house")
+                                .font(.system(size: bottomBarIconSize, weight: .medium))
+                                .foregroundColor(.primary)
+                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
+                                .background(liquidGlassBackground(isCircle: true))
+                        }
+
+                        Button {
+                            let generator = UIImpactFeedbackGenerator(style: .medium)
+                            generator.impactOccurred()
+                            handleZoomOut()
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: bottomBarIconSize, weight: .medium))
+                                .foregroundColor(.primary)
+                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
+                                .background(liquidGlassBackground(isCircle: true))
+                        }
                     }
 
                     Spacer()
@@ -770,27 +784,6 @@ struct OutlineView: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isEditMode)
-    }
-
-    /// Handle zoom out action from bottom bar
-    private func handleZoomOut() {
-        // Use navigation history to go back if possible
-        if navigationHistory.canGoBack {
-            navigationHistory.pop()
-            zoomedNodeId = navigationHistory.currentZoomId
-            return
-        }
-
-        // Fallback: navigate up the tree hierarchy
-        if let zoomedId = zoomedNodeId,
-           let zoomed = document.root.find(id: zoomedId) {
-            if let parent = zoomed.parent, !parent.isRoot {
-                zoomedNodeId = parent.id
-            } else {
-                document.deleteNodeIfEmpty(zoomedId)
-                zoomedNodeId = nil
-            }
-        }
     }
 
     /// Create a new bullet and zoom into it
@@ -845,6 +838,29 @@ struct OutlineView: View {
         }
     }
 
+    // MARK: - Zoom Out (Back)
+
+    /// Handle zoom out action — navigate back in history or up the tree
+    private func handleZoomOut() {
+        // Use navigation history to go back if possible
+        if navigationHistory.canGoBack {
+            navigationHistory.pop()
+            zoomedNodeId = navigationHistory.currentZoomId
+            return
+        }
+
+        // Fallback: navigate up the tree hierarchy
+        if let zoomedId = zoomedNodeId,
+           let zoomed = document.root.find(id: zoomedId) {
+            if let parent = zoomed.parent, !parent.isRoot {
+                zoomedNodeId = parent.id
+            } else {
+                document.deleteNodeIfEmpty(zoomedId)
+                zoomedNodeId = nil
+            }
+        }
+    }
+
     // MARK: - macOS Tab Switcher
 
     #if os(macOS)
@@ -875,21 +891,38 @@ struct OutlineView: View {
                 .padding(.leading, 16)
                 .padding(.bottom, 12)
 
-                // Home button — go to root and collapse all
-                Button {
-                    goHomeAndCollapseAll()
-                } label: {
-                    Image(systemName: "house")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .padding(8)
-                        .background(
-                            Circle()
-                                .fill(Color.secondary.opacity(0.1))
-                        )
+                // Home and Back buttons — only when zoomed in
+                if zoomedNodeId != nil {
+                    Button {
+                        goHomeAndCollapseAll()
+                    } label: {
+                        Image(systemName: "house")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .padding(8)
+                            .background(
+                                Circle()
+                                    .fill(Color.secondary.opacity(0.1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 12)
+
+                    Button {
+                        handleZoomOut()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .padding(8)
+                            .background(
+                                Circle()
+                                    .fill(Color.secondary.opacity(0.1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 12)
                 }
-                .buttonStyle(.plain)
-                .padding(.bottom, 12)
 
                 Spacer()
 

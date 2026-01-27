@@ -547,6 +547,11 @@ extension FocusedValues {
 
 #if os(macOS)
 class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Register for remote notifications so CloudKit push notifications are delivered
+        NSApplication.shared.registerForRemoteNotifications()
+    }
+
     /// Keep the app running when all windows are closed
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
