@@ -275,7 +275,7 @@ struct OutlineView: View {
     // MARK: - Computed
 
     /// Visible nodes with their effective depth and tree lines (accounting for zoom)
-    /// When zoomed, only includes children of the zoomed node (zoomed node shown as header separately)
+    /// When zoomed, shows the zoomed node at depth 0, then its children at depth 1+
     /// Note: We reference structureVersion to ensure SwiftUI observes structural changes
     /// Uses per-tab collapsedNodeIds for visibility calculation
     private var nodesWithDepth: [(node: OutlineNode, depth: Int, treeLines: [Bool])] {
@@ -284,14 +284,19 @@ struct OutlineView: View {
         var result: [(node: OutlineNode, depth: Int, treeLines: [Bool])] = []
 
         if let zoomed = zoomedNode {
-            // Zoomed: only show children (zoomed node itself shown as header)
-            // Children start at depth 0 (they are the "top level" in this view)
-            let children = flattenedVisible(from: zoomed)
-            for child in children {
-                // Depth is relative to zoomed node's children (so direct children are depth 0)
-                let effectiveDepth = child.depth - zoomed.depth - 1
-                let treeLines = calculateTreeLines(for: child, zoomDepth: zoomed.depth + 1)
-                result.append((node: child, depth: effectiveDepth, treeLines: treeLines))
+            // Zoomed: show the zoomed node itself at depth 0 (as editable header)
+            result.append((node: zoomed, depth: 0, treeLines: []))
+
+            // Then show children at depth 1+
+            // Only show children if zoomed node is not collapsed
+            if !collapsedNodeIds.contains(zoomed.id) {
+                let children = flattenedVisible(from: zoomed)
+                for child in children {
+                    // Depth is relative to zoomed node (so direct children are depth 1)
+                    let effectiveDepth = child.depth - zoomed.depth
+                    let treeLines = calculateTreeLines(for: child, zoomDepth: zoomed.depth)
+                    result.append((node: child, depth: effectiveDepth, treeLines: treeLines))
+                }
             }
         } else {
             // Not zoomed - show all visible nodes from root
@@ -299,7 +304,11 @@ struct OutlineView: View {
             let visibleNodes = flattenedVisible(from: document.root)
             for node in visibleNodes {
                 let effectiveDepth = max(0, node.depth - zoomDepth)
-                let treeLines = calculateTreeLines(for: node, zoomDepth: zoomDepth)
+                var treeLines = calculateTreeLines(for: node, zoomDepth: zoomDepth)
+                // Root is invisible (no bullet shown) - hide tree line at column 0
+                if !treeLines.isEmpty {
+                    treeLines[0] = false
+                }
                 result.append((node: node, depth: effectiveDepth, treeLines: treeLines))
             }
         }
@@ -721,6 +730,8 @@ struct OutlineView: View {
                     Button {
                         let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.impactOccurred()
+                        // Dismiss keyboard before showing carousel
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                         isCarouselVisible = true
                     } label: {
                         HStack(spacing: 6) {
@@ -807,8 +818,8 @@ struct OutlineView: View {
                         Button {
                             let generator = UIImpactFeedbackGenerator(style: .light)
                             generator.impactOccurred()
-                            if let focused = document.focusedNode, focused.hasChildren {
-                                zoomedNodeId = focused.id
+                            if let focused = document.focusedNode {
+                                zoomIn(to: focused)
                             }
                         } label: {
                             Image(systemName: "plus.magnifyingglass")
@@ -938,15 +949,17 @@ struct OutlineView: View {
         var current = node
 
         // Walk up the ancestor chain (excluding the node itself)
+        // Always add the entry BEFORE checking if we should stop,
+        // so that the array length matches effectiveDepth
         while let parent = current.parent {
-            // Don't go above the zoom level
-            if parent.id == zoomedNodeId || parent.isRoot {
-                break
-            }
-
             // Check if 'current' has siblings after it
             let hasSiblingsBelow = current.nextSibling != nil
             lines.insert(hasSiblingsBelow, at: 0)
+
+            // Stop after including the root or zoomed node level
+            if parent.isRoot || parent.id == zoomedNodeId {
+                break
+            }
 
             current = parent
         }
@@ -956,10 +969,28 @@ struct OutlineView: View {
 
     // MARK: - Zoom Operations
 
-    /// Zoom into the focused node
-    func zoomIn() {
-        guard let focused = document.focusedNode, focused.hasChildren else { return }
-        zoomedNodeId = focused.id
+    /// Zoom into the focused node (or any specific node)
+    /// Creates an empty child if none exist and focuses on the first child
+    func zoomIn(to node: OutlineNode? = nil) {
+        let target = node ?? document.focusedNode
+        guard let target else { return }
+
+        zoomedNodeId = target.id
+        // Ensure zoomed node is expanded
+        collapsedNodeIds.remove(target.id)
+
+        // Create empty child if none exist, and focus on first child
+        if target.children.isEmpty {
+            let emptyChild = OutlineNode(title: "")
+            target.addChild(emptyChild)
+            document.focusedNodeId = emptyChild.id
+            document.structureVersion += 1
+            iCloudManager.shared.scheduleAutoSave(for: document)
+        } else {
+            // Focus on first child
+            document.focusedNodeId = target.children.first?.id
+        }
+        document.focusVersion += 1
     }
 
     /// Zoom out one level

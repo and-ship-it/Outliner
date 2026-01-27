@@ -7,6 +7,11 @@
 
 import Foundation
 import Combine
+#if os(iOS)
+import UIKit
+#else
+import AppKit
+#endif
 
 /// Day the week starts on
 enum WeekStartDay: Int, CaseIterable, Identifiable {
@@ -47,54 +52,15 @@ final class iCloudManager {
     private let folderName = "Lineout-ly"
     private let trashFolderName = ".trash"
 
-    // MARK: - Auto-Save
+    // MARK: - Auto-Save (Markdown Backup)
 
     private var saveTask: Task<Void, Never>?
-    private let saveDebounceInterval: Duration = .seconds(1)
+    /// Markdown backup debounce (30s since CloudKit handles real-time sync)
+    private let saveDebounceInterval: Duration = .seconds(30)
 
-    // MARK: - File Change Detection
-
-    /// Last known modification date of the file (when we loaded/saved it)
-    private(set) var lastKnownModificationDate: Date?
-
-    /// Check if the file has been modified externally (by another device)
-    func hasFileChangedExternally() -> Bool {
-        guard let fileURL = mainFileURL ?? (isICloudAvailable ? nil : localMainFileURL) else {
-            return false
-        }
-
-        do {
-            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-            if let modDate = attributes[.modificationDate] as? Date {
-                if let lastKnown = lastKnownModificationDate {
-                    // File is newer than what we last loaded/saved
-                    let hasChanged = modDate > lastKnown.addingTimeInterval(1) // 1 second tolerance
-                    if hasChanged {
-                        print("[iCloud] 🔄 File changed externally: last known \(lastKnown), current \(modDate)")
-                    }
-                    return hasChanged
-                }
-            }
-        } catch {
-            print("[iCloud] Error checking file modification: \(error)")
-        }
-        return false
-    }
-
-    /// Update the last known modification date (call after load/save)
-    private func updateLastKnownModificationDate() {
-        guard let fileURL = mainFileURL ?? (isICloudAvailable ? nil : localMainFileURL) else { return }
-
-        do {
-            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-            if let modDate = attributes[.modificationDate] as? Date {
-                lastKnownModificationDate = modDate
-                print("[iCloud] Updated last known mod date: \(modDate)")
-            }
-        } catch {
-            print("[iCloud] Error getting file modification date: \(error)")
-        }
-    }
+    /// JSON cache save task (frequent, for fast local loading)
+    private var cacheSaveTask: Task<Void, Never>?
+    private let cacheSaveDebounceInterval: Duration = .seconds(1)
 
     // MARK: - Computed URLs
 
@@ -294,17 +260,12 @@ final class iCloudManager {
             throw iCloudError.containerNotAvailable
         }
 
-        // Trigger iCloud download if file is not local yet
-        // This is important for syncing between devices
-        try? FileManager.default.startDownloadingUbiquitousItem(at: mainFile)
-
-        // Wait a moment for download to start (if needed)
-        try? await Task.sleep(for: .milliseconds(500))
+        // Wait for iCloud to download the latest version of the file
+        await waitForICloudDownload(fileURL: mainFile)
 
         // Move file coordination to background thread to avoid blocking main thread
         // Parse markdown on background, create document on main thread
         let root = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<OutlineNode, Error>) in
-            // Use userInitiated QoS for responsive loading
             DispatchQueue.global(qos: .userInitiated).async {
                 let coordinator = NSFileCoordinator()
                 var coordinatorError: NSError?
@@ -331,31 +292,93 @@ final class iCloudManager {
         }
 
         // Create document on main thread (we're already on MainActor)
-        // Track when we loaded the file
-        updateLastKnownModificationDate()
+        print("[iCloud] Loaded document from markdown")
         return OutlineDocument(root: root)
+    }
+
+    // MARK: - iCloud Download Wait
+
+    /// Wait for iCloud to download the latest version of a file (up to timeout)
+    private func waitForICloudDownload(fileURL: URL) async {
+        // First, trigger download
+        do {
+            try FileManager.default.startDownloadingUbiquitousItem(at: fileURL)
+            print("[iCloud] 📥 Triggered download for: \(fileURL.lastPathComponent)")
+        } catch {
+            print("[iCloud] ⚠️ startDownloadingUbiquitousItem failed: \(error)")
+            return
+        }
+
+        // Check if file is already up to date
+        if isFileDownloaded(fileURL) {
+            print("[iCloud] ✅ File already downloaded")
+            return
+        }
+
+        // Poll until downloaded or timeout (up to 10 seconds)
+        let maxAttempts = 20
+        for attempt in 1...maxAttempts {
+            try? await Task.sleep(for: .milliseconds(500))
+
+            if isFileDownloaded(fileURL) {
+                print("[iCloud] ✅ File downloaded after \(attempt * 500)ms")
+                return
+            }
+
+            print("[iCloud] ⏳ Waiting for download... attempt \(attempt)/\(maxAttempts)")
+        }
+
+        print("[iCloud] ⚠️ Download timeout - proceeding with local copy")
+    }
+
+    /// Check if an iCloud file is fully downloaded
+    private func isFileDownloaded(_ fileURL: URL) -> Bool {
+        do {
+            let resourceValues = try fileURL.resourceValues(forKeys: [
+                .ubiquitousItemDownloadingStatusKey,
+                .ubiquitousItemIsDownloadingKey
+            ])
+
+            let status = resourceValues.ubiquitousItemDownloadingStatus
+            return status == .current
+        } catch {
+            // If we can't check, assume it's a local file (not in iCloud)
+            return FileManager.default.fileExists(atPath: fileURL.path)
+        }
     }
 
     // MARK: - Document Saving
 
-    /// Schedule an auto-save with debouncing
+    /// Schedule auto-save: JSON cache at 1s (fast local recovery), markdown backup at 30s
     func scheduleAutoSave(for document: OutlineDocument) {
+        // JSON cache: save frequently for fast local loading
+        cacheSaveTask?.cancel()
+        cacheSaveTask = Task {
+            try? await Task.sleep(for: cacheSaveDebounceInterval)
+            guard !Task.isCancelled else { return }
+            do {
+                try LocalNodeCache.shared.save(document.root)
+            } catch {
+                print("[iCloud] JSON cache save failed: \(error)")
+            }
+        }
+
+        // Markdown backup: save infrequently (CloudKit handles real-time sync)
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(for: saveDebounceInterval)
             guard !Task.isCancelled else { return }
-            await save(document)
+            await saveMarkdown(document)
         }
     }
 
-    /// Save the document immediately
-    func save(_ document: OutlineDocument) async {
+    /// Save the markdown backup file
+    private func saveMarkdown(_ document: OutlineDocument) async {
         guard let mainFile = mainFileURL else {
-            print("[iCloud] Save failed: mainFileURL is nil, falling back to local")
             // Fall back to local save
             do {
                 try saveLocal(document)
-                print("[iCloud] Saved to local: \(localMainFileURL.path)")
+                print("[iCloud] Saved markdown backup to local: \(localMainFileURL.path)")
             } catch {
                 print("[iCloud] Local save failed: \(error)")
                 lastError = error
@@ -363,15 +386,11 @@ final class iCloudManager {
             return
         }
 
-        // Serialize on main thread since document access should be main-thread
         let markdown = MarkdownCodec.serialize(document.root)
-        print("[iCloud] Saving to: \(mainFile.path)")
-        print("[iCloud] Content length: \(markdown.count) chars")
+        print("[iCloud] Saving markdown backup to: \(mainFile.path)")
 
-        // Move file coordination to background thread to avoid blocking main thread
         let saveResult: Error? = await withCheckedContinuation { continuation in
-            // Use userInitiated QoS for responsive saving
-            DispatchQueue.global(qos: .userInitiated).async {
+            DispatchQueue.global(qos: .utility).async {
                 let coordinator = NSFileCoordinator()
                 var coordinatorError: NSError?
                 var writeError: Error?
@@ -379,38 +398,38 @@ final class iCloudManager {
                 coordinator.coordinate(writingItemAt: mainFile, options: .forReplacing, error: &coordinatorError) { url in
                     do {
                         try markdown.write(to: url, atomically: true, encoding: .utf8)
-                        print("[iCloud] Save successful")
+                        print("[iCloud] Markdown backup saved")
                     } catch {
-                        print("[iCloud] Save error: \(error)")
                         writeError = error
                     }
                 }
 
-                if let error = coordinatorError {
-                    print("[iCloud] Coordinator error: \(error)")
-                    continuation.resume(returning: error)
-                } else if let error = writeError {
-                    continuation.resume(returning: error)
-                } else {
-                    continuation.resume(returning: nil)
-                }
+                let error = coordinatorError ?? writeError
+                continuation.resume(returning: error)
             }
         }
 
-        // Update error state back on main thread
         if let error = saveResult {
             lastError = error
         } else {
             lastError = nil
-            // Track when we saved the file
-            updateLastKnownModificationDate()
         }
     }
 
-    /// Force save immediately (cancels any pending auto-save)
+    /// Save everything immediately (for background transition)
     func forceSave(_ document: OutlineDocument) async {
         saveTask?.cancel()
-        await save(document)
+        cacheSaveTask?.cancel()
+
+        // Save JSON cache immediately
+        do {
+            try LocalNodeCache.shared.save(document.root)
+        } catch {
+            print("[iCloud] JSON cache save failed: \(error)")
+        }
+
+        // Save markdown backup immediately
+        await saveMarkdown(document)
     }
 
     // MARK: - Fallback for Non-iCloud
@@ -446,14 +465,12 @@ final class iCloudManager {
         if fileManager.fileExists(atPath: localMainFileURL.path) {
             let markdown = try String(contentsOf: localMainFileURL, encoding: .utf8)
             let root = MarkdownCodec.parse(markdown)
-            updateLastKnownModificationDate()
             return OutlineDocument(root: root)
         } else {
             // Create empty document for new week
             let emptyContent = "- \n"
             try emptyContent.write(to: localMainFileURL, atomically: true, encoding: .utf8)
             print("[iCloud] Created new local week file: \(currentWeekFileName)")
-            updateLastKnownModificationDate()
             return OutlineDocument.createEmpty()
         }
     }
@@ -462,7 +479,6 @@ final class iCloudManager {
     func saveLocal(_ document: OutlineDocument) throws {
         let markdown = MarkdownCodec.serialize(document.root)
         try markdown.write(to: localMainFileURL, atomically: true, encoding: .utf8)
-        updateLastKnownModificationDate()
     }
 }
 

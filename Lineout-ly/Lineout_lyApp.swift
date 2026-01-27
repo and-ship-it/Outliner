@@ -214,7 +214,7 @@ struct OutlineCommands: Commands {
             .keyboardShortcut(.escape, modifiers: [])
             .disabled(document == nil)
 
-            Button("Go Home") {
+            Button("Zoom to Top") {
                 goHomeAndCollapseAll()
             }
             .keyboardShortcut("h", modifiers: [.command, .shift])
@@ -431,7 +431,11 @@ struct OutlineCommands: Commands {
     }
 
     private func resetFontSize() {
+        #if os(iOS)
+        fontSizeBinding?.wrappedValue = 17 // Default size (matches Apple Notes)
+        #else
         fontSizeBinding?.wrappedValue = 13 // Default size
+        #endif
     }
 
     // MARK: - Show in Finder

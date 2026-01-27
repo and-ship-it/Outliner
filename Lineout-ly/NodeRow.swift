@@ -150,6 +150,8 @@ struct NodeRow: View {
         rowContent
             .padding(.vertical, 1 * scale)
             .contentShape(Rectangle())
+            // Tree lines spanning full row height (including padding)
+            .background(treeLinesBackground)
             // Highlight selected nodes (Cmd+A progressive selection)
             .background(isNodeSelected ? AppTheme.selection : Color.clear)
             .onTapGesture {
@@ -195,6 +197,8 @@ struct NodeRow: View {
         }
         .padding(.vertical, 1 * scale)
         .contentShape(Rectangle())
+        // Tree lines spanning full row height (including padding)
+        .background(treeLinesBackground)
         // Highlight selected nodes or drop target
         .background(
             Group {
@@ -281,7 +285,7 @@ struct NodeRow: View {
                     showContextMenu = false
                     let generator = UIImpactFeedbackGenerator(style: .light)
                     generator.impactOccurred()
-                    zoomedNodeId = node.id
+                    performZoomIn(to: node)
                 },
                 onSelect: {
                     showContextMenu = false
@@ -454,30 +458,10 @@ struct NodeRow: View {
             Spacer()
                 .frame(width: leftPadding)
 
-            // Indentation with tree lines
+            // Indentation spacer (tree lines drawn as background on outer row)
             if effectiveDepth > 0 {
-                HStack(spacing: 0) {
-                    ForEach(0..<effectiveDepth, id: \.self) { level in
-                        // Each column is indentWidth (20*scale) wide
-                        // Tree line should be at treeLineLeading (11*scale) from left edge
-                        // This aligns with the center of the parent bullet at that depth level
-                        let lineWidth = max(1, scale)
-
-                        Color.clear
-                            .frame(width: indentWidth)
-                            .overlay(alignment: .topLeading) {
-                                if level < treeLines.count && treeLines[level] {
-                                    Rectangle()
-                                        .fill(Color.gray.opacity(0.3))
-                                        .frame(width: lineWidth, height: nil)
-                                        .frame(maxHeight: .infinity)
-                                        .offset(x: treeLineLeading - lineWidth / 2)
-                                        .padding(.top, -6 * scale)
-                                        .padding(.bottom, -4 * scale)
-                                }
-                            }
-                    }
-                }
+                Color.clear
+                    .frame(width: CGFloat(effectiveDepth) * indentWidth)
             }
 
             // Bullet with lock indicator
@@ -502,7 +486,7 @@ struct NodeRow: View {
                         // Double-tap on bullet zooms into this node
                         let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.impactOccurred()
-                        zoomedNodeId = node.id
+                        performZoomIn(to: node)
                         #endif
                     }
                 )
@@ -621,6 +605,60 @@ struct NodeRow: View {
         }
     }
 
+    // MARK: - Zoom Operations
+
+    /// Zoom into a specific node, creating an empty child if needed and focusing on first child
+    private func performZoomIn(to target: OutlineNode) {
+        zoomedNodeId = target.id
+        // Ensure zoomed node is expanded
+        collapsedNodeIds.remove(target.id)
+
+        // Create empty child if none exist, and focus on first child
+        if target.children.isEmpty {
+            let emptyChild = OutlineNode(title: "")
+            target.addChild(emptyChild)
+            document.focusedNodeId = emptyChild.id
+            document.structureVersion += 1
+            iCloudManager.shared.scheduleAutoSave(for: document)
+        } else {
+            // Focus on first child
+            document.focusedNodeId = target.children.first?.id
+        }
+        document.focusVersion += 1
+    }
+
+    // MARK: - Tree Lines Background
+
+    /// Tree lines drawn as background on the outer row (spans full row height including padding)
+    @ViewBuilder
+    private var treeLinesBackground: some View {
+        if effectiveDepth > 0 {
+            let lineWidth = max(1, scale)
+            HStack(spacing: 0) {
+                // Left padding
+                Color.clear
+                    .frame(width: leftPadding)
+
+                // Tree line columns
+                ForEach(0..<effectiveDepth, id: \.self) { level in
+                    Color.clear
+                        .frame(width: indentWidth)
+                        .overlay(alignment: .topLeading) {
+                            if level < treeLines.count && treeLines[level] {
+                                Rectangle()
+                                    .fill(Color.gray.opacity(0.3))
+                                    .frame(width: lineWidth)
+                                    .frame(maxHeight: .infinity)
+                                    .offset(x: treeLineLeading - lineWidth / 2)
+                            }
+                        }
+                }
+
+                Spacer()
+            }
+        }
+    }
+
     // MARK: - Subviews
 
     @ViewBuilder
@@ -633,7 +671,7 @@ struct NodeRow: View {
                     // Only allow editing if not locked
                     if !isLockedByOtherWindow {
                         node.title = newValue
-                        document.contentDidChange()  // Trigger auto-save
+                        document.contentDidChange(nodeId: node.id)  // Trigger auto-save
                     }
                 }
             ),
@@ -709,7 +747,7 @@ struct NodeRow: View {
                     set: { newValue in
                         if !isLockedByOtherWindow {
                             node.title = newValue
-                            document.contentDidChange()  // Trigger auto-save
+                            document.contentDidChange(nodeId: node.id)  // Trigger auto-save
                         }
                     }
                 ),
@@ -762,7 +800,7 @@ struct NodeRow: View {
 
                         // Append to current node's title
                         node.title += (node.title.isEmpty ? "" : " ") + markdownLink
-                        document.contentDidChange()
+                        document.contentDidChange(nodeId: node.id)
 
                         // Then fetch the real title and update
                         if let title = await LinkParser.fetchTitle(for: url) {
@@ -771,7 +809,7 @@ struct NodeRow: View {
                             let oldLink = "[\(placeholder)](\(url.absoluteString))"
                             let newLink = "[\(shortTitle)](\(url.absoluteString))"
                             node.title = node.title.replacingOccurrences(of: oldLink, with: newLink)
-                            document.contentDidChange()
+                            document.contentDidChange(nodeId: node.id)
                         }
                     }
                 },
@@ -849,7 +887,7 @@ struct NodeRow: View {
         case .zoomIn:
             // No animation - prevents focus/cursor issues during view hierarchy changes
             if let focused = document.focusedNode {
-                zoomedNodeId = focused.id
+                performZoomIn(to: focused)
             }
         case .zoomOut:
             // No animation - prevents focus/cursor issues during view hierarchy changes
@@ -931,7 +969,7 @@ struct NodeRow: View {
 
                 // Append to current node's title
                 node.title += (node.title.isEmpty ? "" : " ") + markdownLink
-                document.contentDidChange()
+                document.contentDidChange(nodeId: node.id)
 
                 // Then fetch the real title and update
                 if let title = await LinkParser.fetchTitle(for: url) {
@@ -940,7 +978,7 @@ struct NodeRow: View {
                     let oldLink = "[\(placeholder)](\(url.absoluteString))"
                     let newLink = "[\(shortTitle)](\(url.absoluteString))"
                     node.title = node.title.replacingOccurrences(of: oldLink, with: newLink)
-                    document.contentDidChange()
+                    document.contentDidChange(nodeId: node.id)
                 }
             }
         }

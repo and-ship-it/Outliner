@@ -18,6 +18,17 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
     var children: [OutlineNode]
     weak var parent: OutlineNode?
 
+    // MARK: - CloudKit Sync Properties
+
+    /// Sibling order for CloudKit sync (gaps of 10000 for efficient insert)
+    var sortIndex: Int64
+
+    /// Timestamp of last local modification (for conflict resolution)
+    var lastModifiedLocally: Date
+
+    /// Encoded CKRecord system fields for partial CloudKit updates
+    var cloudKitSystemFields: Data?
+
     // MARK: - Computed Properties
 
     var hasChildren: Bool { !children.isEmpty }
@@ -67,7 +78,10 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         isCollapsed: Bool = false,
         isTask: Bool = false,
         isTaskCompleted: Bool = false,
-        children: [OutlineNode] = []
+        children: [OutlineNode] = [],
+        sortIndex: Int64 = 0,
+        lastModifiedLocally: Date = Date(),
+        cloudKitSystemFields: Data? = nil
     ) {
         self.id = id
         self.title = title
@@ -76,6 +90,9 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         self.isTask = isTask
         self.isTaskCompleted = isTaskCompleted
         self.children = children
+        self.sortIndex = sortIndex
+        self.lastModifiedLocally = lastModifiedLocally
+        self.cloudKitSystemFields = cloudKitSystemFields
 
         // Set parent references for children
         for child in children {
@@ -242,9 +259,27 @@ extension OutlineNode {
             isCollapsed: self.isCollapsed,
             isTask: self.isTask,
             isTaskCompleted: self.isTaskCompleted,
-            children: self.children.map { $0.deepCopy() }
+            children: self.children.map { $0.deepCopy() },
+            sortIndex: self.sortIndex,
+            lastModifiedLocally: self.lastModifiedLocally,
+            cloudKitSystemFields: self.cloudKitSystemFields
         )
         return copy
+    }
+}
+
+// MARK: - Sort Index Assignment
+
+extension OutlineNode {
+    /// Gap between sort indices for efficient insertion
+    static let sortIndexGap: Int64 = 10_000
+
+    /// Assign sortIndex values to all children recursively using gaps
+    func assignSortIndices() {
+        for (i, child) in children.enumerated() {
+            child.sortIndex = Int64(i) * OutlineNode.sortIndexGap
+            child.assignSortIndices()
+        }
     }
 }
 

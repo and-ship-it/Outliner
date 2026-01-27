@@ -27,7 +27,11 @@ struct ContentView: View {
     @SceneStorage("zoomedNodeId") private var zoomedNodeIdString: String = ""
 
     /// Font size for this window (persisted per scene/window)
+    #if os(iOS)
+    @SceneStorage("fontSize") private var fontSize: Double = 17.0
+    #else
     @SceneStorage("fontSize") private var fontSize: Double = 13.0
+    #endif
 
     /// Focus mode - dims everything except the focused bullet
     @State private var isFocusMode: Bool = false
@@ -43,9 +47,6 @@ struct ContentView: View {
 
     /// Whether collapse state has been initialized
     @State private var collapseStateInitialized: Bool = false
-
-    /// ID of the auto-created zoom node (for cleanup on close if unused)
-    @State private var autoCreatedZoomNodeId: UUID? = nil
 
     /// Navigation history for tab switcher (iOS and macOS)
     @State private var navigationHistory = NavigationHistoryManager()
@@ -68,7 +69,7 @@ struct ContentView: View {
 
         guard let zoomId = zoomedNodeId,
               let zoomedNode = document.root.find(id: zoomId) else {
-            return weekName.isEmpty ? "Home" : weekName
+            return weekName.isEmpty ? "This Week" : weekName
         }
         // Use the zoomed node's title, or "Untitled" if empty
         let title = zoomedNode.title.isEmpty ? "Untitled" : zoomedNode.title
@@ -107,48 +108,21 @@ struct ContentView: View {
                 }
                 WindowManager.shared.pendingZoom = nil
             }
-            // Default: Auto-zoom into fresh bullet (new window/tab without special context)
-            else if let doc = WindowManager.shared.document {
-                // Check if zoom was already set by onChange handler (optimistic UI)
-                if !zoomedNodeIdString.isEmpty {
-                    // autoCreatedZoomNodeId was already set by onChange handler
-                    print("[Launch] Zoom already set by onChange handler, skipping auto-zoom setup")
-                    collapseStateInitialized = true  // Ensure it's set
-                }
-                // Check if there's an auto-zoom node from initial load (first window)
-                else if let existingAutoZoom = WindowManager.shared.consumeAutoZoomNodeId() {
-                    setZoomedNodeId(existingAutoZoom)
-                    autoCreatedZoomNodeId = existingAutoZoom  // Track for cleanup
-                    collapseStateInitialized = true
-                    print("[Launch] Using existing auto-zoom node (\(existingAutoZoom.uuidString.prefix(8))) for first window")
-                } else {
-                    // Create new bullet with date/time name at the end and zoom into it
-                    let dateFormatter = DateFormatter()
-                    dateFormatter.dateFormat = "EEE, d HH:mm"  // e.g., "Tue, 27 15:30"
-                    let dateTitle = dateFormatter.string(from: Date())
-                    let newNode = OutlineNode(title: dateTitle)
-                    doc.root.addChild(newNode)  // Appends at end
-                    setZoomedNodeId(newNode.id)
-                    autoCreatedZoomNodeId = newNode.id  // Track for cleanup
-                    // Don't set focusedNodeId to zoomed node - focus will go to first child
-                    collapseStateInitialized = true  // Start fresh
-                    print("[Launch] Auto-zoom: created new node '\(dateTitle)' (\(newNode.id.uuidString.prefix(8))) for new window")
-                    iCloudManager.shared.scheduleAutoSave(for: doc)
-                }
-            }
+            // Default: Start at home (root level), no auto-zoom
 
-            // If no collapse state was restored, initialize from document
+            // Initialize collapse state: collapse ALL nodes with children for faster loading
             if !collapseStateInitialized {
                 if let doc = WindowManager.shared.document {
-                    // Initialize collapse state from document's node.isCollapsed
+                    // Collapse all nodes that have children
                     var initialCollapsed = Set<UUID>()
                     for node in doc.root.flattened() {
-                        if node.isCollapsed {
+                        if node.hasChildren {
                             initialCollapsed.insert(node.id)
                         }
                     }
                     collapsedNodeIds = initialCollapsed
                     WindowManager.shared.registerTabCollapseState(windowId: windowId, collapsedNodeIds: initialCollapsed)
+                    print("[Launch] Collapsed all \(initialCollapsed.count) nodes with children")
                 }
                 collapseStateInitialized = true
             }
@@ -156,11 +130,18 @@ struct ContentView: View {
             // Register initial font size and always-on-top state
             WindowManager.shared.registerTabFontSize(windowId: windowId, fontSize: fontSize)
             WindowManager.shared.registerTabAlwaysOnTop(windowId: windowId, isAlwaysOnTop: isAlwaysOnTop)
+
+            // Set up CloudKit per-node sync engine (iOS 17+/macOS 14+)
+            if #available(macOS 14.0, iOS 17.0, *) {
+                CloudKitSyncEngine.shared.setup()
+
+                // Run one-time migration from markdown to CloudKit
+                if let doc = WindowManager.shared.document {
+                    await MigrationManager.migrateIfNeeded(document: doc)
+                }
+            }
         }
         .onDisappear {
-            // Clean up empty auto-created content before closing
-            cleanupEmptyZoomContent()
-
             // Release all locks when window closes
             WindowManager.shared.releaseAllLocks(for: windowId)
             // Unregister the tab to clean up state
@@ -181,17 +162,6 @@ struct ContentView: View {
             // Track always-on-top changes for session save
             WindowManager.shared.registerTabAlwaysOnTop(windowId: windowId, isAlwaysOnTop: newValue)
         }
-        .onChange(of: WindowManager.shared.isLoading) { _, isLoading in
-            // React immediately when placeholder becomes ready (optimistic UI)
-            if !isLoading,
-               zoomedNodeIdString.isEmpty,  // Don't override existing zoom
-               let autoZoom = WindowManager.shared.consumeAutoZoomNodeId() {
-                setZoomedNodeId(autoZoom)
-                autoCreatedZoomNodeId = autoZoom
-                collapseStateInitialized = true
-                print("[Launch] Immediate auto-zoom to placeholder node (\(autoZoom.uuidString.prefix(8)))")
-            }
-        }
         .onChange(of: scenePhase) { oldPhase, newPhase in
             handleScenePhaseChange(from: oldPhase, to: newPhase)
         }
@@ -211,100 +181,34 @@ struct ContentView: View {
         #endif
     }
 
-    // MARK: - Scene Phase Handling (iCloud Sync)
+    // MARK: - Scene Phase Handling
 
     /// Handle app going to background or coming to foreground
     private func handleScenePhaseChange(from oldPhase: ScenePhase, to newPhase: ScenePhase) {
         switch newPhase {
         case .background:
             // Save immediately before going to background
-            // This ensures our changes are in iCloud before another device might edit
             if let document = WindowManager.shared.document {
-                print("[Sync] App going to background - forcing save")
+                print("[Sync] App going to background - forcing save + CloudKit flush")
                 Task {
                     await iCloudManager.shared.forceSave(document)
+
+                    // Flush any pending CloudKit changes
+                    if #available(macOS 14.0, iOS 17.0, *) {
+                        await CloudKitSyncEngine.shared.flushPendingChanges()
+                    }
                 }
             }
 
         case .active:
-            // Coming back to foreground - check if file changed on another device
-            guard oldPhase != .active else { return }  // Only on actual foreground transition
-
-            Task {
-                // Small delay to let iCloud sync complete
-                try? await Task.sleep(for: .milliseconds(500))
-
-                if iCloudManager.shared.hasFileChangedExternally() {
-                    print("[Sync] 🔄 File changed externally - reloading document")
-                    await reloadDocumentFromCloud()
-                } else {
-                    print("[Sync] File unchanged - no reload needed")
-                }
-            }
+            // CKSyncEngine handles push-based sync automatically
+            break
 
         case .inactive:
-            // Transitional state - no action needed
             break
 
         @unknown default:
             break
-        }
-    }
-
-    /// Reload document from iCloud, preserving current zoom state
-    private func reloadDocumentFromCloud() async {
-        guard let oldDoc = WindowManager.shared.document else { return }
-
-        // Remember current state
-        let currentZoom = zoomedNodeId
-        let currentFocus = oldDoc.focusedNodeId
-
-        // Reload
-        await WindowManager.shared.reloadDocument()
-
-        // Try to restore state if the nodes still exist
-        if let doc = WindowManager.shared.document {
-            if let zoomId = currentZoom, doc.root.find(id: zoomId) != nil {
-                setZoomedNodeId(zoomId)
-            }
-            if let focusId = currentFocus, doc.root.find(id: focusId) != nil {
-                doc.focusedNodeId = focusId
-                doc.focusVersion += 1
-            }
-            print("[Sync] Document reloaded, nodes: \(doc.root.children.count)")
-        }
-    }
-
-    // MARK: - Cleanup
-
-    /// Clean up empty auto-created bullets when tab closes without user adding content
-    private func cleanupEmptyZoomContent() {
-        guard let doc = WindowManager.shared.document else { return }
-        guard let zoomId = zoomedNodeId,
-              let zoomedNode = doc.root.find(id: zoomId) else { return }
-
-        // Check if zoomed node only has empty children (no title, no children of their own)
-        let hasNonEmptyContent = zoomedNode.children.contains { child in
-            !child.title.isEmpty || child.hasChildren
-        }
-
-        if !hasNonEmptyContent && !zoomedNode.children.isEmpty {
-            // All children are empty - delete them
-            let childCount = zoomedNode.children.count
-            for child in zoomedNode.children.reversed() {  // Reversed to avoid index issues
-                child.removeFromParent()
-            }
-            print("[Cleanup] Removed \(childCount) empty auto-created children")
-
-            // If zoom node was auto-created by this tab and is now empty, delete it too
-            if autoCreatedZoomNodeId == zoomId && zoomedNode.children.isEmpty {
-                zoomedNode.removeFromParent()
-                print("[Cleanup] Removed auto-created zoom node '\(zoomedNode.title)'")
-            }
-
-            // Trigger save
-            doc.structureVersion += 1
-            iCloudManager.shared.scheduleAutoSave(for: doc)
         }
     }
 

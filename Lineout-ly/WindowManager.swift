@@ -46,33 +46,8 @@ final class WindowManager {
     private var tabOrder: [UUID] = []
 
     private init() {
-        // OPTIMISTIC UI: Create placeholder document synchronously
-        // This ensures the loading view is never shown
-        setupPlaceholderDocument()
-    }
-
-    /// Create placeholder document immediately for optimistic UI
-    private func setupPlaceholderDocument() {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "EEE, d HH:mm"  // e.g., "Tue, 27 15:30"
-        let dateTitle = dateFormatter.string(from: Date())
-
-        let placeholderRoot = OutlineNode(title: "__root__")
-        let placeholderNode = OutlineNode(title: dateTitle)
-        placeholderRoot.addChild(placeholderNode)
-
-        let placeholderDoc = OutlineDocument(root: placeholderRoot)
-        placeholderDoc.autoSaveEnabled = false  // Don't save placeholder
-
-        // Set up for immediate display
-        self.document = placeholderDoc
-        self.autoZoomNodeId = placeholderNode.id
-        self.placeholderNodeId = placeholderNode.id
-        self.placeholderNodeTitle = dateTitle
-        self.isLoading = false  // Show UI immediately!
-        self.isLoadingInBackground = true
-
-        print("[WindowManager] Placeholder ready in init - UI visible immediately")
+        // Start loading - will show loading indicator briefly
+        self.isLoading = true
     }
 
     // MARK: - Tab Tracking
@@ -210,119 +185,70 @@ final class WindowManager {
 
     // MARK: - Document Loading
 
-    /// Pending auto-zoom node for first tab on launch
-    private(set) var autoZoomNodeId: UUID?
-
-    /// Whether we're still loading the real document in background
-    private(set) var isLoadingInBackground = false
-
-    /// The placeholder node that was created before real document loaded
-    private var placeholderNodeId: UUID?
-    private var placeholderNodeTitle: String = ""
-    private var placeholderNodeChildren: [OutlineNode] = []
+    /// Whether document has been loaded
+    private var documentLoaded = false
 
     func loadDocumentIfNeeded() async {
-        // Placeholder was already created in init() for optimistic UI
-        guard isLoadingInBackground else { return }  // Already loaded real document
+        guard !documentLoaded else { return }  // Already loaded
+        documentLoaded = true
 
-        // Load real document in background
         loadError = nil
+        isLoading = true
 
         do {
             let icloud = iCloudManager.shared
 
-            // Re-check iCloud availability
+            // Check iCloud availability
             await icloud.checkICloudAvailability()
 
-            var realDoc: OutlineDocument
+            // Ensure week filename is set before checking cache
+            icloud.updateCurrentWeekFileName()
 
-            if icloud.isICloudAvailable {
-                print("[WindowManager] Loading real document from iCloud in background...")
-                realDoc = try await icloud.loadDocument()
+            var doc: OutlineDocument
+
+            // Try loading from JSON cache first (preserves UUIDs)
+            if let cachedRoot = LocalNodeCache.shared.load() {
+                print("[WindowManager] Loaded from JSON cache, nodes: \(cachedRoot.children.count)")
+                doc = OutlineDocument(root: cachedRoot)
+
+                // Still set up iCloud for sync (but don't wait for download)
+                if icloud.isICloudAvailable {
+                    try? await icloud.setupOnFirstLaunch()
+                }
+            } else if icloud.isICloudAvailable {
+                print("[WindowManager] No cache found, loading from iCloud...")
+                doc = try await icloud.loadDocument()
+
+                // Assign sort indices and save to cache for next launch
+                doc.root.assignSortIndices()
+                try? LocalNodeCache.shared.save(doc.root)
+                print("[WindowManager] Saved initial cache from iCloud document")
             } else {
-                print("[WindowManager] Loading real document from local in background...")
-                realDoc = try icloud.loadLocalDocument()
+                print("[WindowManager] No cache, loading from local storage...")
+                doc = try icloud.loadLocalDocument()
+
+                // Assign sort indices and save to cache for next launch
+                doc.root.assignSortIndices()
+                try? LocalNodeCache.shared.save(doc.root)
+                print("[WindowManager] Saved initial cache from local document")
             }
 
-            print("[WindowManager] Real document loaded, nodes: \(realDoc.root.children.count)")
+            print("[WindowManager] Document loaded, nodes: \(doc.root.children.count)")
 
-            // Capture any content user typed into placeholder while loading
-            guard let placeholderDoc = self.document,
-                  let placeholderId = self.placeholderNodeId,
-                  let currentPlaceholder = placeholderDoc.root.find(id: placeholderId) else {
-                // Placeholder was deleted somehow, just use real doc
-                realDoc.autoSaveEnabled = true
-                self.document = realDoc
-                self.autoZoomNodeId = nil
-                print("[WindowManager] Placeholder not found, using real document as-is")
-                icloud.scheduleAutoSave(for: realDoc)
-                isLoadingInBackground = false
-                return
-            }
-
-            // Deep copy the placeholder node (preserves user's content and same ID)
-            let mergedNode = currentPlaceholder.deepCopy()
-
-            // Remove from placeholder's parent (if any)
-            mergedNode.parent = nil
-
-            // Add to real document (at the end)
-            realDoc.root.addChild(mergedNode)
-
-            // The autoZoomNodeId is already set to the placeholder's ID
-            // which is now the same as mergedNode.id (since deepCopy preserves ID)
-
-            print("[WindowManager] Merged placeholder content into real document")
-            print("[WindowManager] Auto-zoom node: '\(mergedNode.title)' (\(mergedNode.id.uuidString.prefix(8)))")
-
-            // CRITICAL: Set focus BEFORE switching documents to prevent focus loss
-            // When document changes, SwiftUI re-renders and checks isFocused
-            // If focusedNodeId isn't set, the text field will resign first responder
-            if let firstChild = mergedNode.children.first {
-                realDoc.focusedNodeId = firstChild.id
-                print("[WindowManager] Pre-set focus to first child: \(firstChild.id.uuidString.prefix(8))")
-            } else {
-                // No children - create one and focus it
-                let emptyChild = OutlineNode(title: "")
-                mergedNode.addChild(emptyChild)
-                realDoc.focusedNodeId = emptyChild.id
-                print("[WindowManager] Created empty child and pre-set focus: \(emptyChild.id.uuidString.prefix(8))")
-            }
-
-            // Switch to real document (focus is already set, so text field won't lose focus)
-            realDoc.autoSaveEnabled = true
-            self.document = realDoc
-
-            // Increment focus version after a short delay to ensure view is ready
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                realDoc.focusVersion += 1
-                print("[WindowManager] Focus version incremented")
-            }
-
-            // Trigger save for the new node
-            icloud.scheduleAutoSave(for: realDoc)
+            doc.autoSaveEnabled = true
+            self.document = doc
+            self.isLoading = false
 
         } catch {
             print("[WindowManager] Load error: \(error)")
             loadError = error
-            // Keep the placeholder document so user doesn't lose their work
-            // They can try again later
+            isLoading = false
         }
-
-        isLoadingInBackground = false
-    }
-
-    /// Consume the auto-zoom node ID (call once from first tab)
-    func consumeAutoZoomNodeId() -> UUID? {
-        let id = autoZoomNodeId
-        autoZoomNodeId = nil
-        return id
     }
 
     func reloadDocument() async {
         document = nil
-        placeholderNodeId = nil
-        isLoadingInBackground = false
+        documentLoaded = false
         await loadDocumentIfNeeded()
     }
 

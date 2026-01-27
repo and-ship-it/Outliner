@@ -53,11 +53,11 @@ Someone who:
 - Previous weeks stay in folder as archive
 - Week start day setting in Edit menu (Sunday/Monday/Saturday)
 
-### Auto-Zoom on Launch (DONE)
-- Creates new bullet at top of document on app launch
-- Automatically zooms into that bullet
-- Cursor ready to type immediately
-- Fresh start every time
+### Fast Launch with Collapsed View (DONE)
+- Opens directly to home/root view (no auto-zoom)
+- All nodes with children are collapsed on launch
+- Fast loading with minimal visible nodes
+- Preserves document structure for quick navigation
 
 ### Simplified Navigation (DONE)
 - Removed detailed breadcrumb trail
@@ -138,12 +138,12 @@ Each tab maintains independent:
 - **Font size** - Text size (9-32pt)
 - **Always on top** - Window floats above others
 
-### Fresh Start on Launch
-Every app launch starts fresh:
-- Creates a new bullet with date/time title
-- Automatically zooms into that bullet
-- User can start typing immediately
-- No session restore (intentional for "thinking tool" philosophy)
+### Fast Launch with Collapsed View
+Every app launch optimizes for fast loading:
+- Opens directly to home/root view (no auto-zoom)
+- All nodes with children are collapsed on launch
+- Minimizes visible nodes for quick initial render
+- User can expand/navigate to any section as needed
 
 ---
 
@@ -258,8 +258,10 @@ Every app launch starts fresh:
 - Toggle with **Cmd+Shift+F**
 
 ### Zoom
-- Zooming into a bullet shows only that subtree
-- Breadcrumbs appear at bottom showing path
+- Zooming into a bullet shows that bullet as editable header at the top
+- Children appear indented below the header
+- Empty child auto-created if bullet has no children (cursor focused there)
+- Tab/window title shows the zoomed bullet's name
 - Each tab can be zoomed to different nodes
 - New tab (**Cmd+T**) opens zoomed to current bullet
 
@@ -371,15 +373,15 @@ Expanded:                  Collapsed:
 ### Zoom Navigation
 ```
 Home view:                 Zoomed into "Project A":
-• Project A                • Project A (header)
-  • Task 1                   • Task 1
+• Project A                • Project A (editable header)
+  • Task 1                   • Task 1 (cursor here)
   • Task 2         →         • Task 2
 • Project B                  • Task 3
 • Project C
-                           Breadcrumb: 🏠 > Project A
+                           Tab title: "Project A"
 ```
 
-- **Cmd+.** - Zoom into focused bullet (show only its subtree)
+- **Cmd+.** - Zoom into focused bullet (shows bullet as header, focuses first child)
 - **Cmd+,** - Zoom out one level (to parent)
 - **Escape** - Zoom to root (go home)
 - **Cmd+Shift+H** - Go home AND collapse all bullets

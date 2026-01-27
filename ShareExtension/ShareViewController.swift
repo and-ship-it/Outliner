@@ -361,10 +361,22 @@ class ShareDocumentHelper {
 
     /// Add shared content to the document
     func addSharedContent(description: String, content: String, isLink: Bool) async throws {
-        // Get the document file URL
+        // Try CloudKit first (per-node sync)
+        let savedToCloudKit = await CloudKitShared.saveSharedContent(
+            description: description,
+            content: content,
+            isLink: isLink
+        )
+
+        if savedToCloudKit {
+            print("[ShareExt] Saved to CloudKit successfully")
+        } else {
+            print("[ShareExt] CloudKit failed, falling back to markdown")
+        }
+
+        // Always write to markdown as backup
         let fileURL = try await getDocumentURL()
 
-        // Read existing content
         var markdown: String
         if FileManager.default.fileExists(atPath: fileURL.path) {
             markdown = try String(contentsOf: fileURL, encoding: .utf8)
@@ -372,7 +384,6 @@ class ShareDocumentHelper {
             markdown = ""
         }
 
-        // Parse existing content to find or create "Shared" node
         let newMarkdown = addToSharedNode(
             existingMarkdown: markdown,
             description: description,
@@ -380,7 +391,6 @@ class ShareDocumentHelper {
             isLink: isLink
         )
 
-        // Write back
         try newMarkdown.write(to: fileURL, atomically: true, encoding: .utf8)
     }
 

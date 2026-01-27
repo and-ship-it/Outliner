@@ -43,6 +43,9 @@ final class OutlineDocument {
     /// Whether auto-save is enabled (set to false during loading)
     var autoSaveEnabled: Bool = true
 
+    /// Flag to prevent re-syncing incoming remote changes back to CloudKit
+    var isApplyingRemoteChanges: Bool = false
+
     /// Undo manager for tracking changes
     let undoManager = UndoManager()
 
@@ -64,13 +67,20 @@ final class OutlineDocument {
     }
 
     /// Call this after any structural change (collapse, expand, move, add, delete)
-    private func structureDidChange() {
+    /// Pass dirtyNodeIds to track which nodes changed for CloudKit sync.
+    private func structureDidChange(dirtyNodeIds: Set<UUID> = []) {
         structureVersion += 1
+        if !isApplyingRemoteChanges && !dirtyNodeIds.isEmpty {
+            ChangeTracker.shared.markDirty(dirtyNodeIds)
+        }
         scheduleAutoSave()
     }
 
     /// Call this after content changes (title, body edits)
-    func contentDidChange() {
+    func contentDidChange(nodeId: UUID? = nil) {
+        if !isApplyingRemoteChanges, let nodeId = nodeId {
+            ChangeTracker.shared.markDirty(nodeId)
+        }
         scheduleAutoSave()
     }
 
@@ -78,6 +88,11 @@ final class OutlineDocument {
     private func scheduleAutoSave() {
         guard autoSaveEnabled else { return }
         iCloudManager.shared.scheduleAutoSave(for: self)
+
+        // Enqueue dirty nodes into CKSyncEngine for CloudKit push
+        if #available(macOS 14.0, iOS 17.0, *) {
+            CloudKitSyncEngine.shared.schedulePendingChanges()
+        }
     }
 
     // MARK: - Computed Properties
@@ -536,7 +551,7 @@ final class OutlineDocument {
             }
             undoManager.setActionName("New Bullet")
 
-            structureDidChange()
+            structureDidChange(dirtyNodeIds: [newNode.id])
 
             // Defer focus to next run loop to allow SwiftUI to create the view
             DispatchQueue.main.async { [weak self] in
@@ -555,7 +570,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("New Bullet")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: [newNode.id])
 
         // Defer focus to next run loop to allow SwiftUI to create the view
         DispatchQueue.main.async { [weak self] in
@@ -580,7 +595,7 @@ final class OutlineDocument {
             }
             undoManager.setActionName("New Bullet")
 
-            structureDidChange()
+            structureDidChange(dirtyNodeIds: [newNode.id])
 
             // Defer focus to next run loop to allow SwiftUI to create the view
             DispatchQueue.main.async { [weak self] in
@@ -599,7 +614,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("New Bullet")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: [newNode.id])
 
         // Defer focus to next run loop to allow SwiftUI to create the view
         DispatchQueue.main.async { [weak self] in
@@ -631,7 +646,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("New Bullet")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: [newNode.id])
 
         // Defer focus to next run loop to allow SwiftUI to create the view
         DispatchQueue.main.async { [weak self] in
@@ -878,6 +893,11 @@ final class OutlineDocument {
         // Move to trash before deleting
         TrashBin.shared.trash(focused)
 
+        // Track deletion for CloudKit sync
+        if !isApplyingRemoteChanges {
+            ChangeTracker.shared.markDeletedWithDescendants(focused)
+        }
+
         // Find previous node to focus (merge up behavior for backspace)
         // Set flag to position cursor at end of text (merge up)
         if let index = visible.firstIndex(of: focused) {
@@ -928,6 +948,12 @@ final class OutlineDocument {
 
         // Move to trash before deleting
         TrashBin.shared.trash(focused)
+
+        // Track deletion and modification for CloudKit sync
+        if !isApplyingRemoteChanges {
+            ChangeTracker.shared.markDeleted(focused.id)
+            ChangeTracker.shared.markDirty(previousNode.id)
+        }
 
         // Delete current node
         focused.removeFromParent()
@@ -999,6 +1025,11 @@ final class OutlineDocument {
 
         // Move to trash before deleting (includes all children)
         TrashBin.shared.trash(focused)
+
+        // Track deletion for CloudKit sync (node + all descendants)
+        if !isApplyingRemoteChanges {
+            ChangeTracker.shared.markDeletedWithDescendants(focused)
+        }
 
         // Find next sibling or parent to focus (skip over children since they'll be deleted)
         if let nextSibling = focused.nextSibling {
@@ -1173,6 +1204,10 @@ final class OutlineDocument {
         // Move all selected to trash and delete
         for node in nodesToDelete {
             TrashBin.shared.trash(node)
+            // Track deletion for CloudKit sync
+            if !isApplyingRemoteChanges {
+                ChangeTracker.shared.markDeletedWithDescendants(node)
+            }
             node.removeFromParent()
         }
 
@@ -1273,6 +1308,7 @@ final class OutlineDocument {
               let index = focused.indexInParent,
               index > 0 else { return }
 
+        let swappedSibling = parent.children[index - 1]
         parent.children.remove(at: index)
         parent.children.insert(focused, at: index - 1)
 
@@ -1282,7 +1318,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("Move Up")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: [focused.id, swappedSibling.id])
     }
 
     func moveDown() {
@@ -1291,6 +1327,7 @@ final class OutlineDocument {
               let index = focused.indexInParent,
               index < parent.children.count - 1 else { return }
 
+        let swappedSibling = parent.children[index + 1]
         parent.children.remove(at: index)
         parent.children.insert(focused, at: index + 1)
 
@@ -1300,7 +1337,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("Move Down")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: [focused.id, swappedSibling.id])
     }
 
     /// Check if the focused node can be indented (has a previous sibling to become child of)
@@ -1344,7 +1381,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("Indent")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: [focused.id])
     }
 
     /// Indent all selected nodes
@@ -1444,7 +1481,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("Outdent")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: [focused.id])
     }
 
     /// Outdent all selected nodes
@@ -1539,7 +1576,7 @@ final class OutlineDocument {
         }
         undoManager.setActionName("Move")
 
-        structureDidChange()
+        structureDidChange(dirtyNodeIds: [nodeId])
     }
 
     /// Move multiple selected nodes to be siblings after a target node (for iOS drag-drop)
@@ -1602,7 +1639,8 @@ final class OutlineDocument {
         }
         undoManager.setActionName("Move")
 
-        structureDidChange()
+        let movedIds = Set(sortedNodes.map { $0.id })
+        structureDidChange(dirtyNodeIds: movedIds)
     }
 
     // MARK: - Movement Undo Helpers
@@ -1655,6 +1693,131 @@ final class OutlineDocument {
         }
 
         structureDidChange()
+    }
+}
+
+// MARK: - Remote Changes (CloudKit Sync)
+
+extension OutlineDocument {
+    /// Apply incoming remote changes from CloudKit without triggering outbound sync.
+    /// Called by CloudKitSyncEngine when new records are fetched.
+    @MainActor
+    func applyRemoteChanges(_ changes: [NodeRecordMapper.RemoteNodeChange]) {
+        guard !changes.isEmpty else { return }
+
+        isApplyingRemoteChanges = true
+        defer {
+            isApplyingRemoteChanges = false
+            structureVersion += 1
+            scheduleAutoSave()
+        }
+
+        for change in changes {
+            applyRemoteChange(change)
+        }
+
+        print("[Sync] Applied \(changes.count) remote changes")
+    }
+
+    /// Apply a single remote node change (upsert)
+    @MainActor
+    private func applyRemoteChange(_ change: NodeRecordMapper.RemoteNodeChange) {
+        if let existingNode = root.find(id: change.nodeId) {
+            // Update existing node
+            // Skip title update if user is actively editing this node
+            if focusedNodeId != change.nodeId {
+                existingNode.title = change.title
+            }
+            existingNode.body = change.body
+            existingNode.isTask = change.isTask
+            existingNode.isTaskCompleted = change.isTaskCompleted
+            existingNode.sortIndex = change.sortIndex
+            existingNode.lastModifiedLocally = change.modifiedLocally
+            existingNode.cloudKitSystemFields = change.systemFieldsData
+
+            // Check if parent changed (node was moved remotely)
+            let currentParentId = existingNode.parent?.id
+            if change.parentId != currentParentId && !(change.parentId == nil && existingNode.parent?.isRoot == true) {
+                // Re-parent the node
+                existingNode.removeFromParent()
+                let newParent: OutlineNode
+                if let parentId = change.parentId, let found = root.find(id: parentId) {
+                    newParent = found
+                } else {
+                    newParent = root
+                }
+                // Insert sorted by sortIndex
+                let insertIndex = newParent.children.firstIndex(where: { $0.sortIndex > change.sortIndex })
+                    ?? newParent.children.endIndex
+                newParent.addChild(existingNode, at: insertIndex)
+            }
+        } else {
+            // Create new node
+            let newNode = OutlineNode(
+                id: change.nodeId,
+                title: change.title,
+                body: change.body,
+                isTask: change.isTask,
+                isTaskCompleted: change.isTaskCompleted,
+                sortIndex: change.sortIndex,
+                lastModifiedLocally: change.modifiedLocally,
+                cloudKitSystemFields: change.systemFieldsData
+            )
+
+            // Find parent
+            let parent: OutlineNode
+            if let parentId = change.parentId, let found = root.find(id: parentId) {
+                parent = found
+            } else {
+                parent = root
+            }
+
+            // Insert sorted by sortIndex
+            let insertIndex = parent.children.firstIndex(where: { $0.sortIndex > change.sortIndex })
+                ?? parent.children.endIndex
+            parent.addChild(newNode, at: insertIndex)
+        }
+    }
+
+    /// Apply remote deletions from CloudKit
+    @MainActor
+    func applyRemoteDeletions(_ nodeIds: [UUID]) {
+        guard !nodeIds.isEmpty else { return }
+
+        isApplyingRemoteChanges = true
+        defer {
+            isApplyingRemoteChanges = false
+            structureVersion += 1
+            scheduleAutoSave()
+        }
+
+        for nodeId in nodeIds {
+            if let node = root.find(id: nodeId) {
+                // If the user is focused on this node, move focus
+                if focusedNodeId == nodeId {
+                    let visible = visibleNodes
+                    if let index = visible.firstIndex(of: node) {
+                        if index > 0 {
+                            focusedNodeId = visible[index - 1].id
+                        } else if index < visible.count - 1 {
+                            focusedNodeId = visible[index + 1].id
+                        } else {
+                            focusedNodeId = nil
+                        }
+                    }
+                }
+                node.removeFromParent()
+            }
+        }
+
+        // Ensure minimum node
+        if root.children.isEmpty {
+            let newNode = OutlineNode(title: "")
+            root.addChild(newNode)
+            focusedNodeId = newNode.id
+        }
+
+        print("[Sync] Applied \(nodeIds.count) remote deletions")
     }
 }
 

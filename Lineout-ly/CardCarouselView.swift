@@ -369,7 +369,9 @@ struct CardPreviewView: View {
     /// Title for this card - shows first 5 words of content
     private var title: String {
         guard let id = zoomId, let node = document.root.find(id: id) else {
-            return "Home"
+            // Root level: show week name (e.g., "2026-Jan-W05")
+            let weekName = iCloudManager.shared.currentWeekFileName.replacingOccurrences(of: ".md", with: "")
+            return weekName.isEmpty ? "This Week" : weekName
         }
 
         // Use node title if not empty
@@ -439,12 +441,6 @@ struct CardPreviewView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Title bar - more compact
             HStack(spacing: 8) {
-                if isHome {
-                    Image(systemName: "house")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
-
                 Text(title)
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.primary)
@@ -683,7 +679,8 @@ struct MacOSCardPreviewView: View {
 
     private var title: String {
         guard let id = zoomId, let node = document.root.find(id: id) else {
-            return "Home"
+            let weekName = iCloudManager.shared.currentWeekFileName.replacingOccurrences(of: ".md", with: "")
+            return weekName.isEmpty ? "This Week" : weekName
         }
         return node.title.isEmpty ? "Untitled" : String(node.title.prefix(20))
     }
@@ -731,11 +728,6 @@ struct MacOSCardPreviewView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Title
             HStack(spacing: 4) {
-                if isHome {
-                    Image(systemName: "house")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.secondary)
-                }
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
