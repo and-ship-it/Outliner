@@ -99,6 +99,7 @@ struct OutlineTextField: NSViewRepresentable {
     var isFocused: Bool
     var protectedPrefixLength: Int = 0  // Number of characters at start that cannot be edited (e.g. date prefix)
     var isTaskCompleted: Bool = false  // Whether this is a completed task (strikethrough + grey)
+    var isUnseen: Bool = false  // Whether this node was externally created and not yet seen (blue text)
     var hasNextNode: Bool = true  // Whether there's a next node to navigate to
     var placeholder: String? = nil  // Placeholder text shown when empty
     var searchQuery: String = ""  // Current search query for highlighting matches
@@ -228,6 +229,9 @@ struct OutlineTextField: NSViewRepresentable {
         textField.isEditable = !isReadOnly
         textField.isSelectable = true
 
+        // Determine base text color (blue for unseen externally-created nodes)
+        let baseTextColor: NSColor = isUnseen ? .systemBlue : .labelColor
+
         // Update text color, strikethrough, search highlighting, and link styling
         if isTaskCompleted {
             textField.textColor = NSColor.secondaryLabelColor
@@ -241,9 +245,9 @@ struct OutlineTextField: NSViewRepresentable {
             textField.attributedStringValue = NSAttributedString(string: text, attributes: attributes)
         } else if !searchQuery.isEmpty {
             // Apply search highlighting
-            textField.textColor = NSColor.labelColor
+            textField.textColor = baseTextColor
             let attributedString = NSMutableAttributedString(string: text, attributes: [
-                .foregroundColor: NSColor.labelColor,
+                .foregroundColor: baseTextColor,
                 .font: weightedFont
             ])
 
@@ -263,9 +267,9 @@ struct OutlineTextField: NSViewRepresentable {
             // Check for markdown links and style them
             let links = LinkParser.parseMarkdownLinks(text)
             if !links.isEmpty {
-                textField.textColor = NSColor.labelColor
+                textField.textColor = baseTextColor
                 let attributedString = NSMutableAttributedString(string: text, attributes: [
-                    .foregroundColor: NSColor.labelColor,
+                    .foregroundColor: baseTextColor,
                     .font: weightedFont
                 ])
 
@@ -298,7 +302,7 @@ struct OutlineTextField: NSViewRepresentable {
                     outlineTextField.markdownLinks = links.map { (NSRange($0.range, in: text), $0.url) }
                 }
             } else {
-                textField.textColor = NSColor.labelColor
+                textField.textColor = baseTextColor
                 // Remove strikethrough/highlighting by setting plain string
                 if textField.attributedStringValue.string == text {
                     // Check if it has strikethrough or highlighting and remove it
@@ -1467,6 +1471,7 @@ struct OutlineTextField: UIViewRepresentable {
     var onAction: ((OutlineAction) -> Void)? = nil  // General action handler for keyboard shortcuts
     var hasMultiSelection: (() -> Bool)? = nil  // Check if document has multi-selection
     var isReadOnly: Bool = false  // Disable editing for old week browsing
+    var isUnseen: Bool = false  // Whether this node was externally created and not yet seen (blue text)
     var fontSize: CGFloat = 17
     var fontWeight: UIFont.Weight = .regular
 
@@ -1529,11 +1534,15 @@ struct OutlineTextField: UIViewRepresentable {
         textView.font = font
         textView.isEditable = !isReadOnly
 
+        // Determine base text color (blue for unseen externally-created nodes)
+        let baseTextColor: UIColor = isUnseen ? .systemBlue : .label
+        textView.textColor = baseTextColor
+
         // Check for markdown links and apply styling
         let links = LinkParser.parseMarkdownLinks(text)
         if !links.isEmpty && textView.text != text {
             let attributedString = NSMutableAttributedString(string: text, attributes: [
-                .foregroundColor: UIColor.label,
+                .foregroundColor: baseTextColor,
                 .font: font
             ])
 

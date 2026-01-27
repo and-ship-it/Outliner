@@ -133,6 +133,7 @@ struct CodableNode: Codable {
     var reminderTimeHour: Int?
     var reminderTimeMinute: Int?
     var reminderChildType: String?
+    var isUnseen: Bool?
     var isDateNode: Bool?
     var dateNodeDate: Date?
     var children: [CodableNode]
@@ -153,6 +154,7 @@ struct CodableNode: Codable {
         self.reminderTimeHour = node.reminderTimeHour
         self.reminderTimeMinute = node.reminderTimeMinute
         self.reminderChildType = node.reminderChildType
+        self.isUnseen = node.isUnseen
         self.isDateNode = node.isDateNode
         self.dateNodeDate = node.dateNodeDate
         self.children = node.children.map { CodableNode(from: $0) }
@@ -176,6 +178,7 @@ struct CodableNode: Codable {
             reminderTimeHour: reminderTimeHour,
             reminderTimeMinute: reminderTimeMinute,
             reminderChildType: reminderChildType,
+            isUnseen: isUnseen ?? false,
             isDateNode: isDateNode ?? false,
             dateNodeDate: dateNodeDate
         )

@@ -389,6 +389,7 @@ final class ReminderSyncEngine {
             newNode.isTaskCompleted = reminder.isCompleted
             newNode.reminderIdentifier = remId
             newNode.reminderListName = reminder.calendar?.title
+            newNode.isUnseen = true
 
             // Sync time
             if let h = reminder.dueDateComponents?.hour, h != Int(NSNotFound),
@@ -408,6 +409,44 @@ final class ReminderSyncEngine {
 
             didChange = true
             print("[Reminders] Created node from external reminder: \(reminder.title ?? "")")
+        }
+
+        // Step 3: Push unsynced outliner tasks to Reminders.
+        // Tasks under date nodes with isTask=true but no reminderIdentifier
+        // need a corresponding reminder created (e.g., arrived via CloudKit from another device).
+        let allNodes = document.root.flattened()
+        for node in allNodes {
+            guard node.isTask,
+                  node.reminderIdentifier == nil,
+                  node.reminderChildType == nil,
+                  let dueDate = DateStructureManager.shared.inferredDueDate(for: node) else { continue }
+
+            // Create a reminder for this unsynced task
+            do {
+                let reminder = EKReminder(eventStore: eventStore)
+                reminder.title = node.title
+                reminder.isCompleted = node.isTaskCompleted
+
+                var comps = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
+                if let hour = node.reminderTimeHour, let minute = node.reminderTimeMinute {
+                    comps.hour = hour
+                    comps.minute = minute
+                }
+                reminder.dueDateComponents = comps
+
+                // Sync metadata children outbound
+                syncMetadataChildrenOutbound(from: node, to: reminder)
+
+                reminder.calendar = eventStore.defaultCalendarForNewReminders()
+                try eventStore.save(reminder, commit: true)
+
+                node.reminderIdentifier = reminder.calendarItemIdentifier
+                node.reminderListName = reminder.calendar?.title
+                didChange = true
+                print("[Reminders] Pushed unsynced task to Reminders: \(node.title)")
+            } catch {
+                print("[Reminders] Error pushing task to Reminders: \(error)")
+            }
         }
 
         if didChange {

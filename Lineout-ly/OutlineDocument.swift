@@ -1931,6 +1931,7 @@ extension OutlineDocument {
                 reminderTimeHour: change.reminderTimeHour,
                 reminderTimeMinute: change.reminderTimeMinute,
                 reminderChildType: change.reminderChildType,
+                isUnseen: true,
                 isDateNode: change.isDateNode,
                 dateNodeDate: change.dateNodeDate
             )

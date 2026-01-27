@@ -667,6 +667,10 @@ struct NodeRow: View {
     private func tryFocusNode() {
         print("[DEBUG] tryFocusNode: CALLED for node '\(node.title.prefix(20))' (id: \(node.id))")
         document.setFocus(node)
+        // Mark node as seen when user focuses it
+        if node.isUnseen {
+            node.isUnseen = false
+        }
         print("[DEBUG] tryFocusNode: document.focusedNodeId is now \(document.focusedNodeId?.uuidString.prefix(8) ?? "nil")")
     }
 
@@ -754,6 +758,7 @@ struct NodeRow: View {
             isFocused: isNodeFocused,
             protectedPrefixLength: protectedPrefixLength(for: node),
             isTaskCompleted: node.isTask && node.isTaskCompleted,
+            isUnseen: node.isUnseen,
             hasNextNode: hasNextNode,
             placeholder: isOnlyNode && node.title.isEmpty ? placeholderText : nil,
             searchQuery: searchQuery,
@@ -802,7 +807,7 @@ struct NodeRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(node.title)
                     .font(.system(size: fontSize, weight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : .regular))
-                    .foregroundColor(node.isTask && node.isTaskCompleted ? .secondary : .primary)
+                    .foregroundColor(node.isTask && node.isTaskCompleted ? .secondary : (node.isUnseen ? Color.blue : .primary))
                     .strikethrough(node.isTask && node.isTaskCompleted)
                     .lineLimit(maxLinesWhenCollapsed)
                     .truncationMode(.tail)
@@ -912,6 +917,7 @@ struct NodeRow: View {
                 onAction: handleAction,
                 hasMultiSelection: { !document.selectedNodeIds.isEmpty },
                 isReadOnly: isReadOnly,
+                isUnseen: node.isUnseen,
                 fontSize: CGFloat(fontSize),
                 fontWeight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : .regular
             )

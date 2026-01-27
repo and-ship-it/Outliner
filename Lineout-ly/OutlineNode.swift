@@ -53,6 +53,12 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
     /// Values: "note" (synced with reminder.notes) or "link" (synced with reminder.url).
     var reminderChildType: String?
 
+    // MARK: - Unseen Node Tracking
+
+    /// Whether this node was created externally (from Reminders or CloudKit sync)
+    /// and hasn't been focused/seen by the user yet. Rendered in blue until seen.
+    var isUnseen: Bool
+
     // MARK: - Date Node Properties
 
     /// Whether this node is a pinned date node in the weekly structure.
@@ -133,6 +139,7 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         reminderTimeHour: Int? = nil,
         reminderTimeMinute: Int? = nil,
         reminderChildType: String? = nil,
+        isUnseen: Bool = false,
         isDateNode: Bool = false,
         dateNodeDate: Date? = nil
     ) {
@@ -151,6 +158,7 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         self.reminderTimeHour = reminderTimeHour
         self.reminderTimeMinute = reminderTimeMinute
         self.reminderChildType = reminderChildType
+        self.isUnseen = isUnseen
         self.isDateNode = isDateNode
         self.dateNodeDate = dateNodeDate
 

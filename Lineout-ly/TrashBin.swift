@@ -12,23 +12,29 @@ struct TrashedItem: Identifiable, Codable {
     let id: UUID
     let title: String
     let body: String
+    let isTask: Bool
+    let isTaskCompleted: Bool
     let children: [TrashedItem]
     let deletedAt: Date
     let originalDepth: Int
     let weekFileName: String
+    let parentId: UUID?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, body, children, deletedAt, originalDepth, weekFileName
+        case id, title, body, isTask, isTaskCompleted, children, deletedAt, originalDepth, weekFileName, parentId
     }
 
     init(from node: OutlineNode, depth: Int = 0) {
         self.id = UUID()
         self.title = node.title
         self.body = node.body
+        self.isTask = node.isTask
+        self.isTaskCompleted = node.isTaskCompleted
         self.children = node.children.map { TrashedItem(from: $0, depth: depth + 1) }
         self.deletedAt = Date()
         self.originalDepth = depth
         self.weekFileName = iCloudManager.shared.currentWeekFileName
+        self.parentId = node.parent?.id
     }
 
     init(from decoder: Decoder) throws {
@@ -36,10 +42,22 @@ struct TrashedItem: Identifiable, Codable {
         id = try container.decode(UUID.self, forKey: .id)
         title = try container.decode(String.self, forKey: .title)
         body = try container.decode(String.self, forKey: .body)
+        isTask = try container.decodeIfPresent(Bool.self, forKey: .isTask) ?? false
+        isTaskCompleted = try container.decodeIfPresent(Bool.self, forKey: .isTaskCompleted) ?? false
         children = try container.decode([TrashedItem].self, forKey: .children)
         deletedAt = try container.decode(Date.self, forKey: .deletedAt)
         originalDepth = try container.decode(Int.self, forKey: .originalDepth)
         weekFileName = try container.decodeIfPresent(String.self, forKey: .weekFileName) ?? ""
+        parentId = try container.decodeIfPresent(UUID.self, forKey: .parentId)
+    }
+
+    /// Convert back to an OutlineNode tree for restoration
+    func toOutlineNode() -> OutlineNode {
+        let node = OutlineNode(title: title, body: body, isTask: isTask, isTaskCompleted: isTaskCompleted)
+        for child in children {
+            node.addChild(child.toOutlineNode())
+        }
+        return node
     }
 }
 
@@ -107,6 +125,26 @@ final class TrashBin {
         Task {
             await saveToFile()
         }
+    }
+
+    /// Restore a trashed item back to the document.
+    /// Tries to find the original parent; if not found, inserts at root.
+    func restore(_ item: TrashedItem, into document: OutlineDocument) {
+        let restoredNode = item.toOutlineNode()
+
+        // Try to find original parent
+        if let parentId = item.parentId, let parent = document.root.find(id: parentId) {
+            parent.addChild(restoredNode)
+        } else {
+            // Fallback: insert at root level
+            document.root.addChild(restoredNode)
+        }
+
+        document.structureVersion += 1
+        document.contentDidChange(nodeId: restoredNode.id)
+
+        // Remove from trash
+        remove(item)
     }
 
     /// Items for a specific week
@@ -346,13 +384,16 @@ private struct TrashedItemParsed {
 
 // Extension to create TrashedItem directly for parsing
 extension TrashedItem {
-    init(id: UUID, title: String, body: String, children: [TrashedItem], deletedAt: Date, originalDepth: Int, weekFileName: String = "") {
+    init(id: UUID, title: String, body: String, isTask: Bool = false, isTaskCompleted: Bool = false, children: [TrashedItem], deletedAt: Date, originalDepth: Int, weekFileName: String = "", parentId: UUID? = nil) {
         self.id = id
         self.title = title
         self.body = body
+        self.isTask = isTask
+        self.isTaskCompleted = isTaskCompleted
         self.children = children
         self.deletedAt = deletedAt
         self.originalDepth = originalDepth
         self.weekFileName = weekFileName
+        self.parentId = parentId
     }
 }
