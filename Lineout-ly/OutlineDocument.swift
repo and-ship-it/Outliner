@@ -28,6 +28,10 @@ final class OutlineDocument {
     /// Used for merge-up behavior (backspace on empty bullet)
     var cursorAtEndOnNextFocus: Bool = false
 
+    /// When set, cursor should be positioned at this character offset on next focus.
+    /// Takes priority over cursorAtEndOnNextFocus. Reset to nil after use.
+    var cursorOffsetOnNextFocus: Int? = nil
+
     /// Increments to force a focus refresh even when focusedNodeId hasn't changed
     var focusVersion: Int = 0
 
@@ -1007,8 +1011,9 @@ final class OutlineDocument {
         // Delete current node
         focused.removeFromParent()
 
-        // Focus the previous node with cursor at end (after merged text)
-        cursorAtEndOnNextFocus = true
+        // Focus the previous node with cursor at the merge point
+        // (end of the original previous text, before the appended text)
+        cursorOffsetOnNextFocus = previousTitle.count
         focusedNodeId = previousNode.id
         focusVersion += 1
 

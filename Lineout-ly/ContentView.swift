@@ -178,6 +178,13 @@ struct ContentView: View {
             WindowOpener.shared.openWindowAction = {
                 openWindow(id: "main")
             }
+            #else
+            // Set minimum window size for iPad Stage Manager / multitasking
+            for scene in UIApplication.shared.connectedScenes {
+                if let windowScene = scene as? UIWindowScene {
+                    windowScene.sizeRestrictions?.minimumSize = CGSize(width: 320, height: 480)
+                }
+            }
             #endif
         }
         #if os(macOS)
@@ -316,6 +323,8 @@ struct WindowAccessor: NSViewRepresentable {
             if let window = view.window {
                 // Enable automatic tabbing
                 window.tabbingMode = .automatic
+                // Minimum window size (similar to Apple Notes)
+                window.minSize = NSSize(width: 480, height: 400)
                 // Set initial title
                 window.title = title
                 // Set initial window level

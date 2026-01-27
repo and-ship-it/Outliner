@@ -761,9 +761,11 @@ struct NodeRow: View {
             nodeId: node.id,
             nodeTitle: String(node.title.prefix(20)),
             cursorAtEnd: document.cursorAtEndOnNextFocus && isNodeFocused,
+            cursorOffset: isNodeFocused ? document.cursorOffsetOnNextFocus : nil,
             focusVersion: document.focusVersion,
             onCursorPositioned: {
                 document.cursorAtEndOnNextFocus = false
+                document.cursorOffsetOnNextFocus = nil
             },
             onFocusChange: { [self] focused in
                 print("[DEBUG] onFocusChange(macOS): focused=\(focused), node='\(node.title.prefix(20))' (id: \(node.id.uuidString.prefix(8)))")
@@ -841,9 +843,11 @@ struct NodeRow: View {
                 nodeId: node.id,
                 nodeTitle: String(node.title.prefix(20)),
                 cursorAtEnd: document.cursorAtEndOnNextFocus && isNodeFocused,
+                cursorOffset: isNodeFocused ? document.cursorOffsetOnNextFocus : nil,
                 focusVersion: document.focusVersion,
                 onCursorPositioned: {
                     document.cursorAtEndOnNextFocus = false
+                    document.cursorOffsetOnNextFocus = nil
                 },
                 onFocusChange: { [self] focused in
                     print("[DEBUG] onFocusChange(iOS): focused=\(focused), node='\(node.title.prefix(20))' (id: \(node.id.uuidString.prefix(8)))")
@@ -905,6 +909,8 @@ struct NodeRow: View {
                 onDeleteEmpty: isReadOnly ? nil : {
                     document.deleteFocused()
                 },
+                onAction: handleAction,
+                hasMultiSelection: { !document.selectedNodeIds.isEmpty },
                 isReadOnly: isReadOnly,
                 fontSize: CGFloat(fontSize),
                 fontWeight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : .regular
@@ -993,7 +999,6 @@ struct NodeRow: View {
         }
     }
 
-    #if os(macOS)
     private func handleAction(_ action: OutlineAction) {
         // In read-only mode, only allow navigation/view actions
         if isReadOnly {
@@ -1187,7 +1192,6 @@ struct NodeRow: View {
             }
         }
     }
-    #endif
 
     @ViewBuilder
     private var bodyView: some View {

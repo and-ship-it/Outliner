@@ -193,18 +193,13 @@ struct OutlineCommands: Commands {
             Button("Zoom In") {
                 zoomIn()
             }
-            .keyboardShortcut(".", modifiers: .command)
+            .keyboardShortcut(".", modifiers: [.command, .shift])
             .disabled(document == nil)
 
             Button("Zoom Out") {
                 zoomOut()
             }
-            #if os(macOS)
-            .keyboardShortcut(",", modifiers: .command)
-            #else
-            // Use different shortcut on iOS to avoid conflict with Settings (Cmd+,)
             .keyboardShortcut(",", modifiers: [.command, .shift])
-            #endif
             .disabled(document == nil)
 
             Button("Zoom to Root") {

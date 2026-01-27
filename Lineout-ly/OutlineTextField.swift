@@ -6,10 +6,9 @@
 //
 
 import SwiftUI
-#if os(macOS)
-import AppKit
 
 /// Actions that can be triggered from keyboard shortcuts in the text field
+/// Shared across macOS and iOS platforms
 enum OutlineAction {
     case collapse
     case expand
@@ -45,6 +44,9 @@ enum OutlineAction {
     case smartPaste([OutlineNode], cursorAtEnd: Bool, cursorAtStart: Bool)  // Structured paste
     case insertLink(URL)  // Insert URL and fetch title asynchronously
 }
+
+#if os(macOS)
+import AppKit
 
 /// Custom field editor (standard cursor)
 class ThickCursorTextView: NSTextView {
@@ -104,6 +106,7 @@ struct OutlineTextField: NSViewRepresentable {
     var nodeId: UUID  // The ID of the node this text field represents (for view recycling safety)
     var nodeTitle: String = ""  // For debugging
     var cursorAtEnd: Bool = false  // Position cursor at end when focusing (for merge-up)
+    var cursorOffset: Int? = nil  // Position cursor at specific character offset (for merge-with-previous)
     var focusVersion: Int = 0  // Increments to force focus refresh even when focusedNodeId unchanged
     var onCursorPositioned: (() -> Void)? = nil  // Called after cursor is positioned (to reset flag)
     var onFocusChange: (Bool) -> Void
@@ -348,6 +351,7 @@ struct OutlineTextField: NSViewRepresentable {
 
                 // Capture values for async block
                 let shouldCursorAtEnd = cursorAtEnd
+                let specificOffset = cursorOffset
                 let cursorPositionedCallback = onCursorPositioned
                 let coordinator = context.coordinator
 
@@ -358,7 +362,12 @@ struct OutlineTextField: NSViewRepresentable {
 
                     // Now set cursor position
                     if let editor = textField.currentEditor() {
-                        if shouldCursorAtEnd {
+                        if let offset = specificOffset {
+                            // Position at specific offset (for merge-with-previous)
+                            let safeOffset = min(offset, editor.string.count)
+                            editor.selectedRange = NSRange(location: safeOffset, length: 0)
+                            cursorPositionedCallback?()  // Reset the flag
+                        } else if shouldCursorAtEnd {
                             // Position at end (for merge-up after backspace delete)
                             editor.selectedRange = NSRange(location: editor.string.count, length: 0)
                             cursorPositionedCallback?()  // Reset the flag
@@ -969,13 +978,13 @@ class OutlineNSTextField: NSTextField {
             return true
 
         case 47: // Period (.)
-            if hasCommand {
+            if hasCommand && hasShift && !hasOption {
                 actionHandler?(.zoomIn)
                 return true
             }
 
         case 43: // Comma (,)
-            if hasCommand {
+            if hasCommand && hasShift && !hasOption {
                 actionHandler?(.zoomOut)
                 return true
             }
@@ -1446,6 +1455,7 @@ struct OutlineTextField: UIViewRepresentable {
     var nodeId: UUID = UUID()
     var nodeTitle: String = ""
     var cursorAtEnd: Bool = false
+    var cursorOffset: Int? = nil  // Position cursor at specific character offset (for merge-with-previous)
     var focusVersion: Int = 0
     var onCursorPositioned: (() -> Void)? = nil
     var onFocusChange: (Bool) -> Void
@@ -1454,6 +1464,8 @@ struct OutlineTextField: UIViewRepresentable {
     var onNavigateDown: (() -> Void)? = nil  // Navigate to next node
     var onInsertLink: ((URL) -> Void)? = nil  // Insert URL as smart link
     var onDeleteEmpty: (() -> Void)? = nil  // Delete empty bullet on backspace (merge up)
+    var onAction: ((OutlineAction) -> Void)? = nil  // General action handler for keyboard shortcuts
+    var hasMultiSelection: (() -> Bool)? = nil  // Check if document has multi-selection
     var isReadOnly: Bool = false  // Disable editing for old week browsing
     var fontSize: CGFloat = 17
     var fontWeight: UIFont.Weight = .regular
@@ -1497,6 +1509,12 @@ struct OutlineTextField: UIViewRepresentable {
         }
         textView.onDeleteEmpty = { [weak coordinator] in
             coordinator?.parent.onDeleteEmpty?()
+        }
+        textView.actionHandler = { [weak coordinator] action in
+            coordinator?.parent.onAction?(action)
+        }
+        textView.hasMultiSelection = { [weak coordinator] in
+            coordinator?.parent.hasMultiSelection?() ?? false
         }
 
         return textView
@@ -1569,7 +1587,13 @@ struct OutlineTextField: UIViewRepresentable {
         if isFocused && !textView.isFirstResponder {
             DispatchQueue.main.async {
                 textView.becomeFirstResponder()
-                if cursorAtEnd {
+                if let offset = cursorOffset {
+                    // Position cursor at specific offset (for merge-with-previous)
+                    let safeOffset = min(offset, textView.text.count)
+                    if let position = textView.position(from: textView.beginningOfDocument, offset: safeOffset) {
+                        textView.selectedTextRange = textView.textRange(from: position, to: position)
+                    }
+                } else if cursorAtEnd {
                     // Position cursor at end
                     let endPosition = textView.endOfDocument
                     textView.selectedTextRange = textView.textRange(from: endPosition, to: endPosition)
@@ -1616,11 +1640,15 @@ struct OutlineTextField: UIViewRepresentable {
             parent.onFocusChange(false)
         }
 
-        // Handle return key to create sibling + protect date prefix
+        // Handle return key to create sibling + protect date prefix + block tab insertion
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             if text == "\n" {
                 print("[DEBUG] textView shouldChangeTextIn: newline detected, calling onCreateSibling")
                 parent.onCreateSibling?()
+                return false
+            }
+            // Block tab character insertion — Tab is handled as indent/outdent in pressesBegan
+            if text == "\t" {
                 return false
             }
             // Block edits within the protected prefix range
@@ -1639,6 +1667,12 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
     var onReturn: (() -> Void)?
     var onInsertLink: ((URL) -> Void)?
     var onDeleteEmpty: (() -> Void)?
+    var actionHandler: ((OutlineAction) -> Void)?
+    var hasMultiSelection: (() -> Bool)?
+
+    // Progressive Cmd+A state tracking (matches macOS behavior)
+    private var cmdASelectionLevel: Int = 0
+    private var lastCmdATime: TimeInterval = 0
 
     // Markdown links for tap handling
     var markdownLinks: [(range: NSRange, url: URL)] = []
@@ -1679,6 +1713,13 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
     override func deleteBackward() {
         if text.isEmpty {
             onDeleteEmpty?()
+            return
+        }
+        // Backspace at beginning of bullet with text: merge with previous bullet
+        if let range = selectedTextRange,
+           range.isEmpty,
+           offset(from: beginningOfDocument, to: range.start) == 0 {
+            actionHandler?(.mergeWithPrevious(text))
             return
         }
         super.deleteBackward()
@@ -1820,17 +1861,215 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
         lastChangeTime = now
     }
 
-    // MARK: - Arrow Key Navigation (External Keyboard)
+    // MARK: - Keyboard Shortcut Handling (External Keyboard)
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         for press in presses {
             guard let key = press.key else { continue }
 
+            let hasCommand = key.modifierFlags.contains(.command)
+            let hasShift = key.modifierFlags.contains(.shift)
+            let hasOption = key.modifierFlags.contains(.alternate)
+
+            // --- Selection clearing (matches macOS behavior) ---
+            // Most key combos clear multi-selection, except selection-specific shortcuts
+            if hasMultiSelection?() == true {
+                let preservesSelection: Bool = {
+                    switch key.keyCode {
+                    case .keyboardDeleteOrBackspace where hasCommand && hasShift: return true
+                    case .keyboardEscape: return true
+                    case .keyboardA where hasCommand && !hasShift && !hasOption: return true
+                    case .keyboardUpArrow where hasShift && !hasCommand && !hasOption: return true
+                    case .keyboardDownArrow where hasShift && !hasCommand && !hasOption: return true
+                    case .keyboardC where hasCommand && !hasShift && !hasOption: return true
+                    case .keyboardX where hasCommand && !hasShift && !hasOption: return true
+                    case .keyboardTab: return true
+                    case .keyboardOpenBracket where hasCommand: return true
+                    case .keyboardCloseBracket where hasCommand: return true
+                    default: return false
+                    }
+                }()
+                if !preservesSelection && (hasCommand || hasShift || hasOption) {
+                    cmdASelectionLevel = 0
+                    actionHandler?(.clearSelection)
+                }
+            }
+
+            // --- Zoom ---
+
+            // Cmd+Shift+. → Zoom In
+            if key.keyCode == .keyboardPeriod, hasCommand, hasShift, !hasOption {
+                actionHandler?(.zoomIn)
+                return
+            }
+
+            // Cmd+Shift+, → Zoom Out
+            if key.keyCode == .keyboardComma, hasCommand, hasShift, !hasOption {
+                actionHandler?(.zoomOut)
+                return
+            }
+
+            // Escape → Clear suggestion / clear selection / zoom to root
+            if key.keyCode == .keyboardEscape {
+                if hasMultiSelection?() == true {
+                    cmdASelectionLevel = 0
+                    actionHandler?(.clearSelection)
+                } else {
+                    actionHandler?(.zoomToRoot)
+                }
+                return
+            }
+
+            // Cmd+Shift+H → Go home and collapse all
+            if key.keyCode == .keyboardH, hasCommand, hasShift, !hasOption {
+                actionHandler?(.goHomeAndCollapseAll)
+                return
+            }
+
+            // --- Collapse / Expand ---
+
+            // Cmd+Shift+Option+Up → Collapse all children
+            if key.keyCode == .keyboardUpArrow, hasCommand, hasShift, hasOption {
+                actionHandler?(.collapseAll)
+                return
+            }
+
+            // Cmd+Shift+Up → Collapse
+            if key.keyCode == .keyboardUpArrow, hasCommand, hasShift, !hasOption {
+                actionHandler?(.collapse)
+                return
+            }
+
+            // Cmd+Shift+Option+Down → Expand all children
+            if key.keyCode == .keyboardDownArrow, hasCommand, hasShift, hasOption {
+                actionHandler?(.expandAll)
+                return
+            }
+
+            // Cmd+Shift+Down → Expand
+            if key.keyCode == .keyboardDownArrow, hasCommand, hasShift, !hasOption {
+                actionHandler?(.expand)
+                return
+            }
+
+            // --- Move / Reorder ---
+
+            // Shift+Option+Up → Move bullet up
+            if key.keyCode == .keyboardUpArrow, hasShift, hasOption, !hasCommand {
+                actionHandler?(.moveUp)
+                return
+            }
+
+            // Shift+Option+Down → Move bullet down
+            if key.keyCode == .keyboardDownArrow, hasShift, hasOption, !hasCommand {
+                actionHandler?(.moveDown)
+                return
+            }
+
+            // --- Selection ---
+
+            // Shift+Up → Select row up
+            if key.keyCode == .keyboardUpArrow, hasShift, !hasCommand, !hasOption {
+                actionHandler?(.selectRowUp)
+                return
+            }
+
+            // Shift+Down → Select row down
+            if key.keyCode == .keyboardDownArrow, hasShift, !hasCommand, !hasOption {
+                actionHandler?(.selectRowDown)
+                return
+            }
+
+            // Cmd+A → Progressive select all (matches macOS behavior)
+            if key.keyCode == .keyboardA, hasCommand, !hasShift, !hasOption {
+                handleProgressiveCmdA()
+                return
+            }
+
+            // Cmd+C → Copy selected nodes (only with multi-selection)
+            if key.keyCode == .keyboardC, hasCommand, !hasShift, !hasOption {
+                if hasMultiSelection?() == true {
+                    actionHandler?(.copySelected)
+                    return
+                }
+                // Let default handle text copy
+            }
+
+            // Cmd+X → Cut selected nodes (only with multi-selection)
+            if key.keyCode == .keyboardX, hasCommand, !hasShift, !hasOption {
+                if hasMultiSelection?() == true {
+                    actionHandler?(.cutSelected)
+                    return
+                }
+                // Let default handle text cut
+            }
+
+            // --- Indent / Outdent ---
+
+            // Tab → Indent, Shift+Tab → Outdent
+            if key.keyCode == .keyboardTab {
+                if hasShift {
+                    actionHandler?(.outdent)
+                } else {
+                    actionHandler?(.indent)
+                }
+                return
+            }
+
+            // Cmd+] → Indent (alt)
+            if key.keyCode == .keyboardCloseBracket, hasCommand, !hasShift, !hasOption {
+                actionHandler?(.indent)
+                return
+            }
+
+            // Cmd+[ → Outdent (alt)
+            if key.keyCode == .keyboardOpenBracket, hasCommand, !hasShift, !hasOption {
+                actionHandler?(.outdent)
+                return
+            }
+
+            // --- Create / Delete ---
+
+            // Cmd+Enter → Force create sibling below
+            if key.keyCode == .keyboardReturnOrEnter, hasCommand, !hasShift, !hasOption {
+                actionHandler?(.createSiblingBelow)
+                return
+            }
+
+            // Cmd+Shift+Backspace → Delete with children / delete selected
+            if key.keyCode == .keyboardDeleteOrBackspace, hasCommand, hasShift {
+                if hasMultiSelection?() == true {
+                    actionHandler?(.deleteSelected)
+                } else {
+                    actionHandler?(.deleteWithChildren)
+                }
+                return
+            }
+
+            // --- Toggle ---
+
+            // Cmd+Shift+L → Toggle task
+            if key.keyCode == .keyboardL, hasCommand, hasShift, !hasOption {
+                actionHandler?(.toggleTask)
+                return
+            }
+
+            // Cmd+Shift+F → Toggle focus mode
+            if key.keyCode == .keyboardF, hasCommand, hasShift, !hasOption {
+                actionHandler?(.toggleFocusMode)
+                return
+            }
+
+            // Cmd+F → Toggle search
+            if key.keyCode == .keyboardF, hasCommand, !hasShift, !hasOption {
+                actionHandler?(.toggleSearch)
+                return
+            }
+
+            // --- Arrow Navigation at boundaries ---
+
             // Left arrow at position 0 → navigate to previous bullet (cursor at end)
-            if key.keyCode == .keyboardLeftArrow,
-               !key.modifierFlags.contains(.shift),
-               !key.modifierFlags.contains(.command),
-               !key.modifierFlags.contains(.alternate) {
+            if key.keyCode == .keyboardLeftArrow, !hasShift, !hasCommand, !hasOption {
                 if let range = selectedTextRange,
                    range.isEmpty,
                    offset(from: beginningOfDocument, to: range.start) == 0 {
@@ -1842,10 +2081,7 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
             }
 
             // Right arrow at end of text → navigate to next bullet (cursor at start)
-            if key.keyCode == .keyboardRightArrow,
-               !key.modifierFlags.contains(.shift),
-               !key.modifierFlags.contains(.command),
-               !key.modifierFlags.contains(.alternate) {
+            if key.keyCode == .keyboardRightArrow, !hasShift, !hasCommand, !hasOption {
                 if let range = selectedTextRange,
                    range.isEmpty,
                    offset(from: range.start, to: endOfDocument) == 0 {
@@ -1858,6 +2094,30 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
         }
 
         super.pressesBegan(presses, with: event)
+    }
+
+    /// Handle progressive Cmd+A (matches macOS behavior)
+    /// First press: select all text in bullet. Subsequent presses: expand outline selection.
+    private func handleProgressiveCmdA() {
+        let currentTime = Date.timeIntervalSinceReferenceDate
+        let timeSinceLastPress = currentTime - lastCmdATime
+        lastCmdATime = currentTime
+
+        // Reset if more than 1 second since last press
+        if timeSinceLastPress > 1.0 {
+            cmdASelectionLevel = 0
+        }
+
+        cmdASelectionLevel += 1
+
+        if cmdASelectionLevel == 1 {
+            // First press: select all text in current text view
+            selectAll(nil)
+            return
+        }
+
+        // Subsequent presses: progressive outline selection
+        actionHandler?(.progressiveSelectAll)
     }
 
     // MARK: - Paste Handling
