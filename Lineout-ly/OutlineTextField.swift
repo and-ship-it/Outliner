@@ -843,7 +843,7 @@ class OutlineNSTextField: NSTextField {
         // - Shift+Up/Down (which extends selection)
         // - Cmd+C (copy selected)
         // - Cmd+X (cut selected)
-        // - Tab/Shift+Tab (indent/outdent selected)
+        // - Tab/Shift+Tab, Cmd+]/Cmd+[ (indent/outdent selected)
         if hasMultiSelection {
             let isCmdShiftBackspace = event.keyCode == 51 && hasCommand && hasShift
             let isEscape = event.keyCode == 53
@@ -853,8 +853,9 @@ class OutlineNSTextField: NSTextField {
             let isCmdC = event.keyCode == 8 && hasCommand && !hasShift && !hasOption
             let isCmdX = event.keyCode == 7 && hasCommand && !hasShift && !hasOption
             let isTab = event.keyCode == 48
+            let isCmdBracket = (event.keyCode == 30 || event.keyCode == 33) && hasCommand && !hasShift && !hasOption
 
-            if !isCmdShiftBackspace && !isEscape && !isCmdA && !isShiftUp && !isShiftDown && !isCmdC && !isCmdX && !isTab {
+            if !isCmdShiftBackspace && !isEscape && !isCmdA && !isShiftUp && !isShiftDown && !isCmdC && !isCmdX && !isTab && !isCmdBracket {
                 cmdASelectionLevel = 0
                 actionHandler?(.clearSelection)
             }
@@ -905,19 +906,7 @@ class OutlineNSTextField: NSTextField {
             }
             // Plain Cmd+Down: let system handle (move to end of text/document)
 
-        case 123: // Left arrow
-            if hasShift && hasOption && !hasCommand {
-                // Shift+Option+Left: outdent bullet
-                actionHandler?(.outdent)
-                return true
-            }
-
         case 124: // Right arrow
-            if hasShift && hasOption && !hasCommand {
-                // Shift+Option+Right: indent bullet
-                actionHandler?(.indent)
-                return true
-            }
             // Accept suggestion when at end of text and no modifiers
             if !hasCommand && !hasOption && !hasShift {
                 if isShowingSuggestion {
@@ -940,6 +929,20 @@ class OutlineNSTextField: NSTextField {
                 actionHandler?(.indent)
             }
             return true
+
+        case 30: // ] — Cmd+] indent (standard Apple shortcut)
+            if hasCommand && !hasShift && !hasOption {
+                clearSuggestion()
+                actionHandler?(.indent)
+                return true
+            }
+
+        case 33: // [ — Cmd+[ outdent (standard Apple shortcut)
+            if hasCommand && !hasShift && !hasOption {
+                clearSuggestion()
+                actionHandler?(.outdent)
+                return true
+            }
 
         case 36: // Return/Enter
             if hasCommand {
