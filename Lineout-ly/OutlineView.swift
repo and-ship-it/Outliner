@@ -577,8 +577,7 @@ struct OutlineView: View {
                         isEditMode = false
                     }
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity)
 
                 // Indent button
                 remindersToolbarButton(
@@ -587,8 +586,7 @@ struct OutlineView: View {
                 ) {
                     document.indentSelected()
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity)
 
                 // Outdent button
                 remindersToolbarButton(
@@ -597,8 +595,7 @@ struct OutlineView: View {
                 ) {
                     document.outdentSelected()
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity)
 
                 // Delete button (red)
                 remindersToolbarButton(
@@ -613,6 +610,7 @@ struct OutlineView: View {
                         isEditMode = false
                     }
                 }
+                .frame(maxWidth: .infinity)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
@@ -651,7 +649,6 @@ struct OutlineView: View {
                     .font(.system(size: 10))
             }
             .foregroundColor(isDestructive ? .red : .accentColor)
-            .frame(minWidth: 50)
         }
         .buttonStyle(.plain)
     }
