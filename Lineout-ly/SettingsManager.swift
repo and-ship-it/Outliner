@@ -24,11 +24,17 @@ final class SettingsManager {
 
     // MARK: - Settings Properties
 
-    /// Day the week starts on (0 = Sunday, 1 = Monday, 6 = Saturday)
+    /// Day the week starts on, stored as WeekStartDay.rawValue (1=Sunday, 2=Monday, 7=Saturday)
     var weekStartDay: Int {
         didSet {
             save(weekStartDay, forKey: Keys.weekStartDay)
         }
+    }
+
+    /// Typed accessor for the week start day
+    var weekStartDayValue: WeekStartDay {
+        get { WeekStartDay(rawValue: weekStartDay) ?? .monday }
+        set { weekStartDay = newValue.rawValue }
     }
 
     /// Whether word autocomplete is enabled
@@ -58,7 +64,7 @@ final class SettingsManager {
 
     private init() {
         // Load initial values from iCloud (or use defaults)
-        weekStartDay = store.object(forKey: Keys.weekStartDay) as? Int ?? 0
+        weekStartDay = store.object(forKey: Keys.weekStartDay) as? Int ?? WeekStartDay.monday.rawValue
         autocompleteEnabled = store.object(forKey: Keys.autocompleteEnabled) as? Bool ?? true
         defaultFontSize = store.object(forKey: Keys.defaultFontSize) as? Double ?? 13.0
         focusModeEnabled = store.object(forKey: Keys.focusModeEnabled) as? Bool ?? false
@@ -131,20 +137,15 @@ final class SettingsManager {
     // MARK: - Week Start Day Helpers
 
     var weekStartDayName: String {
-        switch weekStartDay {
-        case 0: return "Sunday"
-        case 1: return "Monday"
-        case 6: return "Saturday"
-        default: return "Sunday"
-        }
+        weekStartDayValue.name
     }
 
     func setWeekStartDay(_ name: String) {
         switch name.lowercased() {
-        case "sunday": weekStartDay = 0
-        case "monday": weekStartDay = 1
-        case "saturday": weekStartDay = 6
-        default: weekStartDay = 0
+        case "sunday": weekStartDayValue = .sunday
+        case "monday": weekStartDayValue = .monday
+        case "saturday": weekStartDayValue = .saturday
+        default: weekStartDayValue = .monday
         }
     }
 }

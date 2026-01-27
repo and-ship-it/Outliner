@@ -170,14 +170,13 @@ struct OutlineCommands: Commands {
 
             Divider()
 
-            // Week start day setting
+            // Week start day setting (synced via iCloud KVS)
             Menu("Week Starts On") {
                 ForEach(WeekStartDay.allCases) { day in
                     Button(action: {
-                        UserDefaults.standard.set(day.rawValue, forKey: "weekStartDay")
-                        // Note: This will take effect on next app launch
+                        SettingsManager.shared.weekStartDayValue = day
                     }) {
-                        if iCloudManager.shared.weekStartDay == day {
+                        if SettingsManager.shared.weekStartDayValue == day {
                             Text("\(day.name) ✓")
                         } else {
                             Text(day.name)

@@ -79,10 +79,9 @@ final class iCloudManager {
 
     // MARK: - Week Calculation
 
-    /// Get the week start day from UserDefaults (default: Monday)
+    /// Get the week start day from SettingsManager (synced via iCloud KVS)
     var weekStartDay: WeekStartDay {
-        let rawValue = UserDefaults.standard.integer(forKey: "weekStartDay")
-        return WeekStartDay(rawValue: rawValue) ?? .monday
+        SettingsManager.shared.weekStartDayValue
     }
 
     /// Calculate the filename for a given date based on week start setting

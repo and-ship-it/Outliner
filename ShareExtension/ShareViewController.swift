@@ -432,8 +432,9 @@ class ShareDocumentHelper {
 
         // Get first day of week to determine month
         let weekday = calendar.component(.weekday, from: Date())
-        let weekStart = UserDefaults.standard.integer(forKey: "weekStartDay")
-        let startDay = weekStart > 0 ? weekStart : 2 // Default Monday
+        // Read from iCloud KVS (synced setting), fall back to Monday (2)
+        let weekStart = NSUbiquitousKeyValueStore.default.object(forKey: "weekStartDay") as? Int ?? 2
+        let startDay = weekStart > 0 ? weekStart : 2
         let daysToSubtract = (weekday - startDay + 7) % 7
         let firstDayOfWeek = calendar.date(byAdding: .day, value: -daysToSubtract, to: Date()) ?? Date()
         let monthName = monthFormatter.string(from: firstDayOfWeek)

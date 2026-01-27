@@ -40,9 +40,9 @@ struct GeneralSettingsView: View {
                     get: { settings.weekStartDay },
                     set: { settings.weekStartDay = $0 }
                 )) {
-                    Text("Sunday").tag(0)
-                    Text("Monday").tag(1)
-                    Text("Saturday").tag(6)
+                    ForEach(WeekStartDay.allCases) { day in
+                        Text(day.name).tag(day.rawValue)
+                    }
                 }
                 .pickerStyle(.menu)
             } header: {
