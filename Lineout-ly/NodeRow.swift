@@ -884,6 +884,11 @@ struct NodeRow: View {
             document.moveFocusUp(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
         case .navigateDown:
             document.moveFocusDown(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
+        case .navigateLeftToPrevious:
+            document.cursorAtEndOnNextFocus = true
+            document.moveFocusUp(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
+        case .navigateRightToNext:
+            document.moveFocusDown(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
         case .zoomIn:
             // No animation - prevents focus/cursor issues during view hierarchy changes
             if let focused = document.focusedNode {

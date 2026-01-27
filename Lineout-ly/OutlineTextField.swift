@@ -23,6 +23,8 @@ enum OutlineAction {
     case createSiblingBelow
     case navigateUp
     case navigateDown
+    case navigateLeftToPrevious   // Left arrow at start of text → go to prev bullet, cursor at end
+    case navigateRightToNext      // Right arrow at end of text → go to next bullet, cursor at start
     case zoomIn
     case zoomOut
     case zoomToRoot
@@ -466,6 +468,24 @@ struct OutlineTextField: NSViewRepresentable {
                     return true
                 }
                 // Otherwise, let default down-arrow behavior move cursor within wrapped text
+                return false
+
+            case #selector(NSResponder.moveLeft(_:)):
+                // Navigate to previous bullet if cursor is at position 0
+                let leftCursor = textView.selectedRange().location
+                if leftCursor == 0 && textView.selectedRange().length == 0 {
+                    parent.onAction?(.navigateLeftToPrevious)
+                    return true
+                }
+                return false
+
+            case #selector(NSResponder.moveRight(_:)):
+                // Navigate to next bullet if cursor is at end of text
+                let rightCursor = textView.selectedRange().location
+                if rightCursor >= textView.string.count && textView.selectedRange().length == 0 {
+                    parent.onAction?(.navigateRightToNext)
+                    return true
+                }
                 return false
 
             case #selector(NSResponder.moveDownAndModifySelection(_:)):
@@ -1584,12 +1604,12 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
     // Markdown links for tap handling
     var markdownLinks: [(range: NSRange, url: URL)] = []
 
-    // Spacebar trackpad navigation state
+    // Cursor boundary navigation state (spacebar trackpad + arrow keys)
     private var lastSelectionStart: UITextPosition?
     private var consecutiveUpAttempts: Int = 0
     private var consecutiveDownAttempts: Int = 0
     private var lastChangeTime: Date = Date()
-    private let navigationThreshold: Int = 2
+    private let navigationThreshold: Int = 1
     private var isInContinuousNavigation: Bool = false
     private var lastNavigationDirection: Int = 0  // -1 for up, 1 for down, 0 for none
 
@@ -1749,6 +1769,46 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
 
         lastSelectionStart = currentPosition
         lastChangeTime = now
+    }
+
+    // MARK: - Arrow Key Navigation (External Keyboard)
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        for press in presses {
+            guard let key = press.key else { continue }
+
+            // Left arrow at position 0 → navigate to previous bullet (cursor at end)
+            if key.keyCode == .keyboardLeftArrow,
+               !key.modifierFlags.contains(.shift),
+               !key.modifierFlags.contains(.command),
+               !key.modifierFlags.contains(.alternate) {
+                if let range = selectedTextRange,
+                   range.isEmpty,
+                   offset(from: beginningOfDocument, to: range.start) == 0 {
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.impactOccurred()
+                    onNavigateUp?()
+                    return
+                }
+            }
+
+            // Right arrow at end of text → navigate to next bullet (cursor at start)
+            if key.keyCode == .keyboardRightArrow,
+               !key.modifierFlags.contains(.shift),
+               !key.modifierFlags.contains(.command),
+               !key.modifierFlags.contains(.alternate) {
+                if let range = selectedTextRange,
+                   range.isEmpty,
+                   offset(from: range.start, to: endOfDocument) == 0 {
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.impactOccurred()
+                    onNavigateDown?()
+                    return
+                }
+            }
+        }
+
+        super.pressesBegan(presses, with: event)
     }
 
     // MARK: - Paste Handling

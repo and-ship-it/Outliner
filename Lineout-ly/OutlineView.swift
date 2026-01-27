@@ -730,9 +730,11 @@ struct OutlineView: View {
                     Button {
                         let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.impactOccurred()
-                        // Dismiss keyboard before showing carousel
+                        // Dismiss keyboard first, then show carousel after keyboard animates away
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                        isCarouselVisible = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            isCarouselVisible = true
+                        }
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "square.stack.3d.up")
