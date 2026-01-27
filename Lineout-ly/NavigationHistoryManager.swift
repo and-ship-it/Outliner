@@ -132,4 +132,38 @@ final class NavigationHistoryManager {
         push(zoomId)
         return false
     }
+
+    // MARK: - Old Week Tracking
+
+    /// Which old weeks are currently open as overlay tabs
+    private(set) var openOldWeeks: [String] = []
+
+    /// The currently active old week (nil = viewing current week)
+    private(set) var activeOldWeek: String? = nil
+
+    /// Open an old week tab (or navigate to existing one).
+    /// Returns true if already open, false if newly added.
+    @discardableResult
+    func openOldWeek(_ weekFileName: String) -> Bool {
+        if openOldWeeks.contains(weekFileName) {
+            activeOldWeek = weekFileName
+            return true
+        }
+        openOldWeeks.append(weekFileName)
+        activeOldWeek = weekFileName
+        return false
+    }
+
+    /// Close the active old week tab and return to current week
+    func closeOldWeek() {
+        if let active = activeOldWeek {
+            openOldWeeks.removeAll { $0 == active }
+        }
+        activeOldWeek = nil
+    }
+
+    /// Check if an old week is currently open
+    func isOldWeekOpen(_ weekFileName: String) -> Bool {
+        openOldWeeks.contains(weekFileName)
+    }
 }

@@ -22,11 +22,14 @@ struct MasonryTabOverview: View {
     let onSelectCard: (Int) -> Void
     var onRemoveCard: ((Int) -> Void)? = nil
     var onCreateCard: (() -> Void)? = nil
+    var onOpenOldWeek: ((String) -> Void)? = nil
+    var onOpenTrash: (() -> Void)? = nil
     @Binding var fontSize: Double
     @Binding var isFocusMode: Bool
 
     @State private var searchQuery: String = ""
     @State private var showingSettings: Bool = false
+    @State private var previousWeekFiles: [String] = []
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -83,7 +86,8 @@ struct MasonryTabOverview: View {
         ZStack {
             // Background
             #if os(iOS)
-            Color.black.opacity(0.7)
+            Rectangle()
+                .fill(.regularMaterial)
                 .ignoresSafeArea()
                 .onTapGesture { closeOverview() }
             #else
@@ -117,7 +121,26 @@ struct MasonryTabOverview: View {
                         .frame(width: cardColumnWidth)
                     }
                     .padding(.horizontal, horizontalPadding)
-                    .padding(.bottom, 80) // Space for FAB
+
+                    // Previous Weeks Section
+                    if !filteredPreviousWeeks.isEmpty {
+                        previousWeeksDivider
+
+                        VStack(spacing: 4) {
+                            ForEach(filteredPreviousWeeks, id: \.self) { weekFile in
+                                previousWeekRow(weekFile)
+                            }
+                        }
+                        .padding(.horizontal, horizontalPadding)
+                    }
+
+                    // Trash Section
+                    trashRow
+                        .padding(.horizontal, horizontalPadding)
+                        .padding(.top, filteredPreviousWeeks.isEmpty ? 16 : 12)
+
+                    Spacer()
+                        .frame(height: 80) // Space for FAB
                 }
             }
 
@@ -148,6 +171,7 @@ struct MasonryTabOverview: View {
             #endif
         }
         .onAppear {
+            previousWeekFiles = iCloudManager.shared.listAllWeekFiles()
             #if os(iOS)
             dismissKeyboard()
             #endif
@@ -336,6 +360,159 @@ struct MasonryTabOverview: View {
                 }
             }
         }
+        #endif
+    }
+
+    // MARK: - Previous Weeks
+
+    /// Previous week files excluding the current week
+    private var filteredPreviousWeeks: [String] {
+        let current = iCloudManager.shared.currentWeekFileName
+        let weeks = previousWeekFiles.filter { $0 != current }
+        if searchQuery.isEmpty { return weeks }
+        return weeks.filter {
+            $0.lowercased().contains(searchQuery.lowercased())
+        }
+    }
+
+    private var previousWeeksDivider: some View {
+        HStack(spacing: 8) {
+            Rectangle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(height: 1)
+            Text("Previous Weeks")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+            Rectangle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(height: 1)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, 12)
+    }
+
+    private func previousWeekRow(_ weekFile: String) -> some View {
+        let displayName = weekFile.replacingOccurrences(of: ".md", with: "")
+        let isOpen = navigationHistory.isOldWeekOpen(weekFile)
+
+        return Button {
+            #if os(iOS)
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+            #endif
+            closeOverview()
+            onOpenOldWeek?(weekFile)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 14))
+                    #if os(iOS)
+                    .foregroundColor(.white.opacity(0.7))
+                    #else
+                    .foregroundColor(.secondary)
+                    #endif
+
+                Text(displayName)
+                    .font(.system(size: 14, weight: isOpen ? .semibold : .regular))
+                    #if os(iOS)
+                    .foregroundColor(.white)
+                    #else
+                    .foregroundColor(.primary)
+                    #endif
+
+                Spacer()
+
+                if isOpen {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 6, height: 6)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11))
+                    #if os(iOS)
+                    .foregroundColor(.white.opacity(0.5))
+                    #else
+                    .foregroundColor(.secondary)
+                    #endif
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    #if os(iOS)
+                    .fill(Color.white.opacity(0.1))
+                    #else
+                    .fill(Color.secondary.opacity(0.08))
+                    #endif
+            )
+        }
+        #if os(macOS)
+        .buttonStyle(.plain)
+        #endif
+    }
+
+    private var trashRow: some View {
+        Button {
+            #if os(iOS)
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+            #endif
+            closeOverview()
+            onOpenTrash?()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "trash")
+                    .font(.system(size: 14))
+                    #if os(iOS)
+                    .foregroundColor(.white.opacity(0.7))
+                    #else
+                    .foregroundColor(.secondary)
+                    #endif
+
+                Text("Trash")
+                    .font(.system(size: 14))
+                    #if os(iOS)
+                    .foregroundColor(.white)
+                    #else
+                    .foregroundColor(.primary)
+                    #endif
+
+                Spacer()
+
+                let trashCount = TrashBin.shared.items.count
+                if trashCount > 0 {
+                    Text("\(trashCount)")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        #if os(iOS)
+                        .foregroundColor(.white.opacity(0.5))
+                        #else
+                        .foregroundColor(.secondary)
+                        #endif
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11))
+                    #if os(iOS)
+                    .foregroundColor(.white.opacity(0.5))
+                    #else
+                    .foregroundColor(.secondary)
+                    #endif
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    #if os(iOS)
+                    .fill(Color.white.opacity(0.1))
+                    #else
+                    .fill(Color.secondary.opacity(0.08))
+                    #endif
+            )
+        }
+        #if os(macOS)
+        .buttonStyle(.plain)
         #endif
     }
 

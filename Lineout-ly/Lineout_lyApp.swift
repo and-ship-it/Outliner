@@ -431,7 +431,7 @@ struct OutlineCommands: Commands {
 
     private func resetFontSize() {
         #if os(iOS)
-        fontSizeBinding?.wrappedValue = 17 // Default size (matches Apple Notes)
+        fontSizeBinding?.wrappedValue = 18 // Default size
         #else
         fontSizeBinding?.wrappedValue = 13 // Default size
         #endif

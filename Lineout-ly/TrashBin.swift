@@ -15,6 +15,11 @@ struct TrashedItem: Identifiable, Codable {
     let children: [TrashedItem]
     let deletedAt: Date
     let originalDepth: Int
+    let weekFileName: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, body, children, deletedAt, originalDepth, weekFileName
+    }
 
     init(from node: OutlineNode, depth: Int = 0) {
         self.id = UUID()
@@ -23,6 +28,18 @@ struct TrashedItem: Identifiable, Codable {
         self.children = node.children.map { TrashedItem(from: $0, depth: depth + 1) }
         self.deletedAt = Date()
         self.originalDepth = depth
+        self.weekFileName = iCloudManager.shared.currentWeekFileName
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        body = try container.decode(String.self, forKey: .body)
+        children = try container.decode([TrashedItem].self, forKey: .children)
+        deletedAt = try container.decode(Date.self, forKey: .deletedAt)
+        originalDepth = try container.decode(Int.self, forKey: .originalDepth)
+        weekFileName = try container.decodeIfPresent(String.self, forKey: .weekFileName) ?? ""
     }
 }
 
@@ -90,6 +107,11 @@ final class TrashBin {
         Task {
             await saveToFile()
         }
+    }
+
+    /// Items for a specific week
+    func items(for weekFileName: String) -> [TrashedItem] {
+        items.filter { $0.weekFileName == weekFileName }
     }
 
     // MARK: - Persistence
@@ -172,9 +194,13 @@ final class TrashBin {
         let timestamp = dateFormatter.string(from: item.deletedAt)
 
         if depth == 0 {
-            // Top-level deleted item with timestamp
+            // Top-level deleted item with timestamp and week
             lines.append("\(bullet) \(item.title)")
-            lines.append("*Deleted: \(timestamp)*")
+            if !item.weekFileName.isEmpty {
+                lines.append("*Deleted: \(timestamp) | Week: \(item.weekFileName)*")
+            } else {
+                lines.append("*Deleted: \(timestamp)*")
+            }
             if !item.body.isEmpty {
                 lines.append("")
                 lines.append(item.body)
@@ -205,6 +231,7 @@ final class TrashBin {
         var currentTitle: String?
         var currentBody: String = ""
         var currentTimestamp: Date?
+        var currentWeekFileName: String = ""
         var currentChildren: [String] = []
         var inItem = false
 
@@ -216,6 +243,7 @@ final class TrashBin {
                         title: title,
                         body: currentBody.trimmingCharacters(in: .whitespacesAndNewlines),
                         deletedAt: timestamp,
+                        weekFileName: currentWeekFileName,
                         childrenLines: currentChildren
                     )
                     parsedItems.append(item.toTrashedItem())
@@ -225,11 +253,20 @@ final class TrashBin {
                 currentTitle = String(line.dropFirst(3))
                 currentBody = ""
                 currentTimestamp = nil
+                currentWeekFileName = ""
                 currentChildren = []
                 inItem = true
             } else if line.hasPrefix("*Deleted: ") && line.hasSuffix("*") {
-                let timestampStr = String(line.dropFirst(10).dropLast(1))
-                currentTimestamp = dateFormatter.date(from: timestampStr)
+                // Parse: "*Deleted: 2026-01-27 10:30:00 | Week: 2026-Jan-W05.md*"
+                // or old format: "*Deleted: 2026-01-27 10:30:00*"
+                let content = String(line.dropFirst(10).dropLast(1))
+                if let pipeRange = content.range(of: " | Week: ") {
+                    let timestampStr = String(content[content.startIndex..<pipeRange.lowerBound])
+                    currentTimestamp = dateFormatter.date(from: timestampStr)
+                    currentWeekFileName = String(content[pipeRange.upperBound...])
+                } else {
+                    currentTimestamp = dateFormatter.date(from: content)
+                }
             } else if line == "---" {
                 inItem = false
             } else if inItem && line.hasPrefix("- ") {
@@ -249,6 +286,7 @@ final class TrashBin {
                 title: title,
                 body: currentBody.trimmingCharacters(in: .whitespacesAndNewlines),
                 deletedAt: timestamp,
+                weekFileName: currentWeekFileName,
                 childrenLines: currentChildren
             )
             parsedItems.append(item.toTrashedItem())
@@ -263,6 +301,7 @@ private struct TrashedItemParsed {
     let title: String
     let body: String
     let deletedAt: Date
+    let weekFileName: String
     let childrenLines: [String]
 
     func toTrashedItem() -> TrashedItem {
@@ -275,7 +314,8 @@ private struct TrashedItemParsed {
             body: body,
             children: children,
             deletedAt: deletedAt,
-            originalDepth: 0
+            originalDepth: 0,
+            weekFileName: weekFileName
         )
     }
 
@@ -293,7 +333,8 @@ private struct TrashedItemParsed {
                         body: "",
                         children: [],
                         deletedAt: deletedAt,
-                        originalDepth: 1
+                        originalDepth: 1,
+                        weekFileName: weekFileName
                     ))
                 }
             }
@@ -305,12 +346,13 @@ private struct TrashedItemParsed {
 
 // Extension to create TrashedItem directly for parsing
 extension TrashedItem {
-    init(id: UUID, title: String, body: String, children: [TrashedItem], deletedAt: Date, originalDepth: Int) {
+    init(id: UUID, title: String, body: String, children: [TrashedItem], deletedAt: Date, originalDepth: Int, weekFileName: String = "") {
         self.id = id
         self.title = title
         self.body = body
         self.children = children
         self.deletedAt = deletedAt
         self.originalDepth = originalDepth
+        self.weekFileName = weekFileName
     }
 }

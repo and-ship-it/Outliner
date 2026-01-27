@@ -33,6 +33,12 @@ struct OutlineView: View {
     // Tab switcher state (both platforms)
     @State private var isCarouselVisible: Bool = false
 
+    // Old week overlay state
+    @State private var oldWeekDocument: OutlineDocument? = nil
+    @State private var oldWeekFileName: String? = nil
+    @State private var isLoadingOldWeek: Bool = false
+    @State private var isTrashVisible: Bool = false
+
     // iOS edit mode for multi-selection and drag-drop
     #if os(iOS)
     @State private var isEditMode: Bool = false
@@ -48,10 +54,16 @@ struct OutlineView: View {
     // Scale factor based on font size (base is 13.0)
     private var scale: CGFloat { CGFloat(fontSize) / 13.0 }
 
+    /// Whether we're viewing an old (previous) week document
+    private var isOldWeekMode: Bool { oldWeekDocument != nil }
+
+    /// The document to display — old week overlay or current document
+    private var effectiveDocument: OutlineDocument { oldWeekDocument ?? document }
+
     /// The zoomed node based on zoomedNodeId
     private var zoomedNode: OutlineNode? {
         guard let id = zoomedNodeId else { return nil }
-        return document.root.find(id: id)
+        return effectiveDocument.root.find(id: id)
     }
 
     /// Breadcrumbs path to the zoomed node
@@ -80,6 +92,11 @@ struct OutlineView: View {
                 searchBar
             }
 
+            // Old week read-only banner
+            if isOldWeekMode {
+                oldWeekBanner
+            }
+
             // Outline content
             ScrollViewReader { proxy in
                 ScrollView {
@@ -91,7 +108,7 @@ struct OutlineView: View {
                         ForEach(Array(nodes.enumerated()), id: \.element.node.id) { index, item in
                             #if os(iOS)
                             NodeRow(
-                                document: document,
+                                document: effectiveDocument,
                                 node: item.node,
                                 effectiveDepth: item.depth,
                                 treeLines: item.treeLines,
@@ -104,6 +121,7 @@ struct OutlineView: View {
                                 isSearching: $isSearching,
                                 collapsedNodeIds: $collapsedNodeIds,
                                 searchQuery: searchQuery,
+                                isReadOnly: isOldWeekMode,
                                 isEditMode: $isEditMode,
                                 draggedNodeId: $draggedNodeId,
                                 isDraggingSelection: $isDraggingSelection,
@@ -120,7 +138,7 @@ struct OutlineView: View {
                             )
                             #else
                             NodeRow(
-                                document: document,
+                                document: effectiveDocument,
                                 node: item.node,
                                 effectiveDepth: item.depth,
                                 treeLines: item.treeLines,
@@ -132,7 +150,8 @@ struct OutlineView: View {
                                 isFocusMode: $isFocusMode,
                                 isSearching: $isSearching,
                                 collapsedNodeIds: $collapsedNodeIds,
-                                searchQuery: searchQuery
+                                searchQuery: searchQuery,
+                                isReadOnly: isOldWeekMode
                             )
                             .id(item.node.id)
                             #endif
@@ -140,12 +159,16 @@ struct OutlineView: View {
                     }
                     // Fixed window-level padding (Apple HIG premium spacing)
                     .padding(.top, isSearching ? 16 : 40)
+                    #if os(iOS)
+                    .padding(.bottom, 80)  // Clear the floating bottom nav bar
+                    #else
                     .padding(.bottom, zoomedNodeId != nil ? 16 : 48)
+                    #endif
                 }
                 .onChange(of: document.focusedNodeId) { _, newId in
                     if let id = newId {
                         withAnimation {
-                            proxy.scrollTo(id, anchor: .center)
+                            proxy.scrollTo(id)
                         }
                     }
                 }
@@ -194,10 +217,25 @@ struct OutlineView: View {
                 onCreateCard: {
                     createNewZoomLevel()
                 },
+                onOpenOldWeek: { weekFileName in
+                    isCarouselVisible = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        openOldWeek(weekFileName)
+                    }
+                },
+                onOpenTrash: {
+                    isCarouselVisible = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        isTrashVisible = true
+                    }
+                },
                 fontSize: $fontSize,
                 isFocusMode: $isFocusMode
             )
             .background(ClearBackgroundView())
+        }
+        .sheet(isPresented: $isTrashVisible) {
+            TrashView(isVisible: $isTrashVisible)
         }
         #else
         // macOS tab switcher
@@ -218,17 +256,41 @@ struct OutlineView: View {
                 onCreateCard: {
                     macOSCreateNewZoomLevel()
                 },
+                onOpenOldWeek: { weekFileName in
+                    isCarouselVisible = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        openOldWeek(weekFileName)
+                    }
+                },
+                onOpenTrash: {
+                    isCarouselVisible = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        isTrashVisible = true
+                    }
+                },
                 fontSize: $fontSize,
                 isFocusMode: $isFocusMode
             )
             .frame(width: 500, height: 600)
+        }
+        .sheet(isPresented: $isTrashVisible) {
+            TrashView(isVisible: $isTrashVisible)
         }
         #endif
         .onAppear {
             // Set focus to first visible node when view appears
             setFocusToFirstNode()
         }
-        .onChange(of: zoomedNodeId) { _, _ in
+        .onChange(of: zoomedNodeId) { _, newValue in
+            // Auto-close old week when zooming out to root
+            if isOldWeekMode && newValue == nil {
+                closeOldWeek()
+                return
+            }
+            // Sync zoom with navigation history (navigates to existing tab or creates new)
+            if !isOldWeekMode {
+                navigationHistory.navigateOrPush(newValue)
+            }
             // When zoom changes, ensure we have a valid focus in the new view
             ensureFocusInZoomedView()
         }
@@ -249,14 +311,22 @@ struct OutlineView: View {
     /// Ensure there's a valid focused node in the current zoomed view
     /// Creates an empty child if zoomed into a node with no children
     private func ensureFocusInZoomedView() {
-        // If zoomed and no children, create an empty child
+        let doc = effectiveDocument
+
+        // If zoomed and no children, create an empty child (only in normal mode)
         if let zoomed = zoomedNode, zoomed.children.isEmpty {
+            if isOldWeekMode {
+                // Read-only: just focus the zoomed node itself
+                doc.focusedNodeId = zoomed.id
+                doc.focusVersion += 1
+                return
+            }
             // Use createChild which handles structure change properly
-            document.focusedNodeId = zoomed.id
-            if let emptyChild = document.createChild() {
+            doc.focusedNodeId = zoomed.id
+            if let emptyChild = doc.createChild() {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    document.focusedNodeId = emptyChild.id
-                    document.focusVersion += 1
+                    doc.focusedNodeId = emptyChild.id
+                    doc.focusVersion += 1
                 }
             }
             return
@@ -267,8 +337,8 @@ struct OutlineView: View {
         if let firstNode = nodes.first {
             // Use a small delay to ensure the view hierarchy is fully established
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                document.focusedNodeId = firstNode.node.id
-                document.focusVersion += 1
+                doc.focusedNodeId = firstNode.node.id
+                doc.focusVersion += 1
             }
         }
     }
@@ -280,7 +350,7 @@ struct OutlineView: View {
     /// Note: We reference structureVersion to ensure SwiftUI observes structural changes
     /// Uses per-tab collapsedNodeIds for visibility calculation
     private var nodesWithDepth: [(node: OutlineNode, depth: Int, treeLines: [Bool])] {
-        _ = document.structureVersion // Force observation of structural changes
+        _ = effectiveDocument.structureVersion // Force observation of structural changes
 
         var result: [(node: OutlineNode, depth: Int, treeLines: [Bool])] = []
 
@@ -302,7 +372,7 @@ struct OutlineView: View {
         } else {
             // Not zoomed - show all visible nodes from root
             let zoomDepth = 0
-            let visibleNodes = flattenedVisible(from: document.root)
+            let visibleNodes = flattenedVisible(from: effectiveDocument.root)
             for node in visibleNodes {
                 let effectiveDepth = max(0, node.depth - zoomDepth)
                 var treeLines = calculateTreeLines(for: node, zoomDepth: zoomDepth)
@@ -353,7 +423,7 @@ struct OutlineView: View {
                     }
                 }
                 .onChange(of: searchQuery) { _, newValue in
-                    searchResults = document.search(query: newValue)
+                    searchResults = effectiveDocument.search(query: newValue)
                     selectedResultIndex = 0
                     // Don't auto-navigate - wait for Enter or navigation button
                 }
@@ -428,7 +498,7 @@ struct OutlineView: View {
             current = parent.parent
         }
         // Focus the node
-        document.focusedNodeId = node.id
+        effectiveDocument.focusedNodeId = node.id
     }
 
     private func closeSearch() {
@@ -624,23 +694,7 @@ struct OutlineView: View {
 
     /// Handle zoom out from edge swipe
     private func handleEdgeSwipeZoomOut() {
-        // Use navigation history to go back
-        if navigationHistory.canGoBack {
-            navigationHistory.pop()
-            zoomedNodeId = navigationHistory.currentZoomId
-            return
-        }
-
-        // Fallback: navigate up the tree hierarchy
-        if let zoomedId = zoomedNodeId,
-           let zoomed = document.root.find(id: zoomedId) {
-            if let parent = zoomed.parent, !parent.isRoot {
-                zoomedNodeId = parent.id
-            } else {
-                document.deleteNodeIfEmpty(zoomedId)
-                zoomedNodeId = nil
-            }
-        }
+        handleZoomOut()
     }
 
     /// Settings button overlay - now empty, settings moved to carousel
@@ -724,16 +778,11 @@ struct OutlineView: View {
                             isCarouselVisible = true
                         }
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "square.stack.3d.up")
-                                .font(.system(size: bottomBarIconSize, weight: .medium))
-                            Text("\(navigationHistory.cardCount)")
-                                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        }
-                        .foregroundColor(.primary)
-                        .frame(height: bottomBarButtonSize)
-                        .padding(.horizontal, 14)
-                        .background(liquidGlassBackground())
+                        Image(systemName: "square.stack.3d.up")
+                            .font(.system(size: bottomBarIconSize, weight: .medium))
+                            .foregroundColor(.primary)
+                            .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
+                            .background(liquidGlassBackground(isCircle: true))
                     }
 
                     // Home and Back buttons — only when zoomed in
@@ -765,17 +814,19 @@ struct OutlineView: View {
 
                     Spacer()
 
-                    // New bullet button
-                    Button {
-                        let generator = UIImpactFeedbackGenerator(style: .light)
-                        generator.impactOccurred()
-                        createNewZoomLevel()
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: bottomBarIconSize, weight: .medium))
-                            .foregroundColor(.primary)
-                            .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
-                            .background(liquidGlassBackground(isCircle: true))
+                    if !isOldWeekMode {
+                        // New bullet button
+                        Button {
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
+                            createNewZoomLevel()
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: bottomBarIconSize, weight: .medium))
+                                .foregroundColor(.primary)
+                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
+                                .background(liquidGlassBackground(isCircle: true))
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -794,7 +845,7 @@ struct OutlineView: View {
             let newNode = OutlineNode(title: "")
             todayNode.addChild(newNode)
             collapsedNodeIds.remove(todayNode.id)
-            navigationHistory.push(todayNode.id)
+            navigationHistory.navigateOrPush(todayNode.id)
             zoomedNodeId = todayNode.id
             document.focusedNodeId = newNode.id
             document.focusVersion += 1
@@ -804,7 +855,7 @@ struct OutlineView: View {
             // Fallback: add to root level
             let newNode = OutlineNode(title: "")
             document.root.addChild(newNode)
-            navigationHistory.push(newNode.id)
+            navigationHistory.navigateOrPush(newNode.id)
             zoomedNodeId = newNode.id
             document.structureVersion += 1
             iCloudManager.shared.scheduleAutoSave(for: document)
@@ -816,6 +867,12 @@ struct OutlineView: View {
 
     /// Go to root and collapse all parent nodes
     private func goHomeAndCollapseAll() {
+        // If viewing an old week, close it and return to current week
+        if isOldWeekMode {
+            closeOldWeek()
+            return
+        }
+
         // Delete empty auto-created bullet before going home
         if let zoomedId = zoomedNodeId {
             document.deleteNodeIfEmpty(zoomedId)
@@ -842,6 +899,19 @@ struct OutlineView: View {
 
     /// Handle zoom out action — navigate back in history or up the tree
     private func handleZoomOut() {
+        // Old week mode: zoom out to root closes the old week
+        if isOldWeekMode {
+            if let zoomedId = zoomedNodeId,
+               let zoomed = effectiveDocument.root.find(id: zoomedId),
+               let parent = zoomed.parent, !parent.isRoot {
+                zoomedNodeId = parent.id
+            } else {
+                // At root of old week — close it
+                closeOldWeek()
+            }
+            return
+        }
+
         // Use navigation history to go back if possible
         if navigationHistory.canGoBack {
             navigationHistory.pop()
@@ -861,6 +931,88 @@ struct OutlineView: View {
         }
     }
 
+    // MARK: - Old Week Overlay
+
+    /// Open a previous week's document as read-only overlay
+    private func openOldWeek(_ weekFileName: String) {
+        guard !isLoadingOldWeek else { return }
+
+        // Check if already viewing this week
+        if navigationHistory.openOldWeek(weekFileName) && isOldWeekMode && oldWeekFileName == weekFileName {
+            return
+        }
+
+        isLoadingOldWeek = true
+        Task {
+            do {
+                let doc = try await iCloudManager.shared.loadOldWeekDocument(weekFileName: weekFileName)
+                await MainActor.run {
+                    oldWeekDocument = doc
+                    oldWeekFileName = weekFileName
+                    zoomedNodeId = nil
+                    isLoadingOldWeek = false
+                }
+            } catch {
+                await MainActor.run {
+                    print("[OutlineView] Failed to load old week \(weekFileName): \(error)")
+                    navigationHistory.closeOldWeek()
+                    isLoadingOldWeek = false
+                }
+            }
+        }
+    }
+
+    /// Close the old week overlay and return to current document
+    private func closeOldWeek() {
+        navigationHistory.closeOldWeek()
+        withAnimation(.easeOut(duration: 0.2)) {
+            oldWeekDocument = nil
+            oldWeekFileName = nil
+            zoomedNodeId = nil
+        }
+    }
+
+    /// Banner shown when viewing a read-only old week
+    private var oldWeekBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 13, weight: .medium))
+
+            Text(oldWeekFileName?.replacingOccurrences(of: ".md", with: "") ?? "Previous Week")
+                .font(.system(size: 13, weight: .medium))
+
+            Spacer()
+
+            Text("Read Only")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.15))
+                )
+
+            Button {
+                closeOldWeek()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundStyle(Color.gray.opacity(0.2)),
+            alignment: .bottom
+        )
+    }
+
     // MARK: - macOS Tab Switcher
 
     #if os(macOS)
@@ -873,19 +1025,14 @@ struct OutlineView: View {
                 Button {
                     isCarouselVisible = true
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "square.stack.3d.up")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("\(navigationHistory.cardCount)")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    }
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        Capsule()
-                            .fill(Color.secondary.opacity(0.1))
-                    )
+                    Image(systemName: "square.stack.3d.up")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .padding(8)
+                        .background(
+                            Circle()
+                                .fill(Color.secondary.opacity(0.1))
+                        )
                 }
                 .buttonStyle(.plain)
                 .padding(.leading, 16)
@@ -926,22 +1073,24 @@ struct OutlineView: View {
 
                 Spacer()
 
-                // Plus button — creates under today's date and zooms in
-                Button {
-                    macOSCreateNewZoomLevel()
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .padding(8)
-                        .background(
-                            Circle()
-                                .fill(Color.secondary.opacity(0.1))
-                        )
+                if !isOldWeekMode {
+                    // Plus button — creates under today's date and zooms in
+                    Button {
+                        macOSCreateNewZoomLevel()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .padding(8)
+                            .background(
+                                Circle()
+                                    .fill(Color.secondary.opacity(0.1))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 12)
                 }
-                .buttonStyle(.plain)
-                .padding(.trailing, 16)
-                .padding(.bottom, 12)
             }
         }
     }
@@ -953,7 +1102,7 @@ struct OutlineView: View {
             let newNode = OutlineNode(title: "")
             todayNode.addChild(newNode)
             collapsedNodeIds.remove(todayNode.id)
-            navigationHistory.push(todayNode.id)
+            navigationHistory.navigateOrPush(todayNode.id)
             zoomedNodeId = todayNode.id
             document.focusedNodeId = newNode.id
             document.focusVersion += 1
@@ -963,7 +1112,7 @@ struct OutlineView: View {
             // Fallback: add to root level
             let newNode = OutlineNode(title: "")
             document.root.addChild(newNode)
-            navigationHistory.push(newNode.id)
+            navigationHistory.navigateOrPush(newNode.id)
             zoomedNodeId = newNode.id
             document.structureVersion += 1
             iCloudManager.shared.scheduleAutoSave(for: document)

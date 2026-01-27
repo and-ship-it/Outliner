@@ -83,6 +83,31 @@ final class LocalNodeCache {
         }
     }
 
+    /// Load a specific week's node tree from the JSON cache.
+    /// Returns nil if cache doesn't exist for that week.
+    func load(for weekFileName: String) -> OutlineNode? {
+        let url = cacheFileURL(for: weekFileName)
+
+        guard fileManager.fileExists(atPath: url.path) else {
+            print("[Cache] No cache file for \(weekFileName)")
+            return nil
+        }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+
+            let codableRoot = try decoder.decode(CodableNode.self, from: data)
+            let root = codableRoot.toOutlineNode()
+            print("[Cache] Loaded \(root.flattened().count) nodes from \(url.lastPathComponent)")
+            return root
+        } catch {
+            print("[Cache] Failed to load cache for \(weekFileName): \(error)")
+            return nil
+        }
+    }
+
     /// Check if a cache file exists for the current week
     var hasCacheForCurrentWeek: Bool {
         fileManager.fileExists(atPath: currentCacheFileURL.path)

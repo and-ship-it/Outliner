@@ -25,6 +25,7 @@ struct NodeRow: View {
     @Binding var isSearching: Bool  // Whether search bar is visible
     @Binding var collapsedNodeIds: Set<UUID>  // Per-tab collapse state
     var searchQuery: String = ""  // Current search query for highlighting
+    var isReadOnly: Bool = false  // Disable editing for old week browsing
 
     // iOS-specific parameters for edit mode and drag-drop
     #if os(iOS)
@@ -766,7 +767,7 @@ struct NodeRow: View {
                 }
             },
             onAction: handleAction,
-            onSplitLine: { [self] textAfter in
+            onSplitLine: isReadOnly ? nil : { [self] textAfter in
                 // Parent nodes or zoomed node: split text becomes a child
                 // Leaf nodes: split text becomes a sibling
                 if node.id == zoomedNodeId || node.hasChildren {
@@ -778,6 +779,7 @@ struct NodeRow: View {
                     document.createSiblingBelow(withTitle: textAfter)
                 }
             },
+            isReadOnly: isReadOnly,
             font: .systemFont(ofSize: CGFloat(fontSize)),
             fontWeight: (effectiveDepth == 0 || node.isDateNode) ? .medium : .regular
         )
@@ -847,7 +849,7 @@ struct NodeRow: View {
                         isTextExpanded = false
                     }
                 },
-                onCreateSibling: {
+                onCreateSibling: isReadOnly ? nil : {
                     // Parent nodes: create child (nested bullet)
                     // Leaf nodes: create sibling on same level
                     // Zoomed node: always create child
@@ -870,7 +872,7 @@ struct NodeRow: View {
                     document.cursorAtEndOnNextFocus = false
                     document.moveFocusDown(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
                 },
-                onInsertLink: { url in
+                onInsertLink: isReadOnly ? nil : { url in
                     // Insert URL as a smart link with fetched title
                     Task { @MainActor in
                         // First insert a placeholder with the domain name
@@ -892,6 +894,10 @@ struct NodeRow: View {
                         }
                     }
                 },
+                onDeleteEmpty: isReadOnly ? nil : {
+                    document.deleteFocused()
+                },
+                isReadOnly: isReadOnly,
                 fontSize: CGFloat(fontSize),
                 fontWeight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : .regular
             )
@@ -981,6 +987,20 @@ struct NodeRow: View {
 
     #if os(macOS)
     private func handleAction(_ action: OutlineAction) {
+        // In read-only mode, only allow navigation/view actions
+        if isReadOnly {
+            switch action {
+            case .collapse, .expand, .collapseAll, .expandAll,
+                 .navigateUp, .navigateDown, .navigateLeftToPrevious, .navigateRightToNext,
+                 .zoomIn, .zoomOut, .zoomToRoot,
+                 .selectRowDown, .selectRowUp, .progressiveSelectAll, .clearSelection,
+                 .toggleFocusMode, .goHomeAndCollapseAll, .toggleSearch, .copySelected:
+                break // Allow these
+            default:
+                return // Block all editing actions
+            }
+        }
+
         switch action {
         case .collapse:
             // No animation - prevents focus/cursor issues during view hierarchy changes

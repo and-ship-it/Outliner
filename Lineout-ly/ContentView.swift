@@ -28,7 +28,7 @@ struct ContentView: View {
 
     /// Font size for this window (persisted per scene/window)
     #if os(iOS)
-    @SceneStorage("fontSize") private var fontSize: Double = 17.0
+    @SceneStorage("fontSize") private var fontSize: Double = 18.0
     #else
     @SceneStorage("fontSize") private var fontSize: Double = 13.0
     #endif

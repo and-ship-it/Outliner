@@ -109,6 +109,7 @@ struct OutlineTextField: NSViewRepresentable {
     var onFocusChange: (Bool) -> Void
     var onAction: ((OutlineAction) -> Void)?
     var onSplitLine: ((String) -> Void)?  // Called when splitting line, passes text after cursor
+    var isReadOnly: Bool = false  // Disable editing for old week browsing
     var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
     var fontWeight: NSFont.Weight = .regular
 
@@ -220,8 +221,8 @@ struct OutlineTextField: NSViewRepresentable {
             }
         }
 
-        // Ensure text field is always editable and selectable
-        textField.isEditable = true
+        // Editable unless in read-only mode (old week browsing)
+        textField.isEditable = !isReadOnly
         textField.isSelectable = true
 
         // Update text color, strikethrough, search highlighting, and link styling
@@ -1452,6 +1453,8 @@ struct OutlineTextField: UIViewRepresentable {
     var onNavigateUp: (() -> Void)? = nil  // Navigate to previous node
     var onNavigateDown: (() -> Void)? = nil  // Navigate to next node
     var onInsertLink: ((URL) -> Void)? = nil  // Insert URL as smart link
+    var onDeleteEmpty: (() -> Void)? = nil  // Delete empty bullet on backspace (merge up)
+    var isReadOnly: Bool = false  // Disable editing for old week browsing
     var fontSize: CGFloat = 17
     var fontWeight: UIFont.Weight = .regular
 
@@ -1471,6 +1474,7 @@ struct OutlineTextField: UIViewRepresentable {
         textView.autocorrectionType = .default
         textView.autocapitalizationType = .sentences
         textView.returnKeyType = .default
+        textView.isEditable = !isReadOnly
 
         // Remove any extra padding
         textView.contentInset = .zero
@@ -1491,6 +1495,9 @@ struct OutlineTextField: UIViewRepresentable {
         textView.onInsertLink = { [weak coordinator] url in
             coordinator?.parent.onInsertLink?(url)
         }
+        textView.onDeleteEmpty = { [weak coordinator] in
+            coordinator?.parent.onDeleteEmpty?()
+        }
 
         return textView
     }
@@ -1499,9 +1506,10 @@ struct OutlineTextField: UIViewRepresentable {
         // Keep coordinator's parent reference up to date (critical for callbacks!)
         context.coordinator.parent = self
 
-        // Update font
+        // Update font and editable state
         let font = UIFont.systemFont(ofSize: fontSize, weight: fontWeight)
         textView.font = font
+        textView.isEditable = !isReadOnly
 
         // Check for markdown links and apply styling
         let links = LinkParser.parseMarkdownLinks(text)
@@ -1630,6 +1638,7 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
     var onNavigateDown: (() -> Void)?
     var onReturn: (() -> Void)?
     var onInsertLink: ((URL) -> Void)?
+    var onDeleteEmpty: (() -> Void)?
 
     // Markdown links for tap handling
     var markdownLinks: [(range: NSRange, url: URL)] = []
@@ -1663,6 +1672,16 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         tapGesture.delegate = self
         addGestureRecognizer(tapGesture)
+    }
+
+    // MARK: - Backspace on Empty
+
+    override func deleteBackward() {
+        if text.isEmpty {
+            onDeleteEmpty?()
+            return
+        }
+        super.deleteBackward()
     }
 
     // MARK: - Intrinsic Content Size

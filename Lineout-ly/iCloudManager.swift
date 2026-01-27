@@ -295,10 +295,68 @@ final class iCloudManager {
         return OutlineDocument(root: root)
     }
 
+    // MARK: - Old Week Loading
+
+    /// Load a previous week's document (read-only).
+    /// Tries JSON cache first (preserves UUIDs), then falls back to markdown.
+    func loadOldWeekDocument(weekFileName: String) async throws -> OutlineDocument {
+        // Try JSON cache first
+        if let cachedRoot = LocalNodeCache.shared.load(for: weekFileName) {
+            print("[iCloud] Loaded old week from cache: \(weekFileName)")
+            return OutlineDocument(root: cachedRoot)
+        }
+
+        // Fall back to markdown file
+        guard let appFolder = appFolderURL else {
+            // Try local fallback
+            let localPath = localFallbackURL.appendingPathComponent(weekFileName)
+            if FileManager.default.fileExists(atPath: localPath.path) {
+                let markdown = try String(contentsOf: localPath, encoding: .utf8)
+                let root = MarkdownCodec.parse(markdown)
+                return OutlineDocument(root: root)
+            }
+            throw iCloudError.containerNotAvailable
+        }
+
+        let fileURL = appFolder.appendingPathComponent(weekFileName)
+
+        // Trigger iCloud download if needed
+        await waitForICloudDownload(fileURL: fileURL)
+
+        let root = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<OutlineNode, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let coordinator = NSFileCoordinator()
+                var coordinatorError: NSError?
+                var loadError: Error?
+                var loadedRoot: OutlineNode?
+
+                coordinator.coordinate(readingItemAt: fileURL, options: [], error: &coordinatorError) { url in
+                    do {
+                        let markdown = try String(contentsOf: url, encoding: .utf8)
+                        loadedRoot = MarkdownCodec.parse(markdown)
+                    } catch {
+                        loadError = error
+                    }
+                }
+
+                if let error = coordinatorError ?? loadError {
+                    continuation.resume(throwing: error)
+                } else if let parsedRoot = loadedRoot {
+                    continuation.resume(returning: parsedRoot)
+                } else {
+                    continuation.resume(throwing: iCloudError.loadFailed)
+                }
+            }
+        }
+
+        print("[iCloud] Loaded old week from markdown: \(weekFileName)")
+        return OutlineDocument(root: root)
+    }
+
     // MARK: - iCloud Download Wait
 
     /// Wait for iCloud to download the latest version of a file (up to timeout)
-    private func waitForICloudDownload(fileURL: URL) async {
+    func waitForICloudDownload(fileURL: URL) async {
         // First, trigger download
         do {
             try FileManager.default.startDownloadingUbiquitousItem(at: fileURL)

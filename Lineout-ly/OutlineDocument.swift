@@ -947,6 +947,7 @@ final class OutlineDocument {
             if index > 0 {
                 cursorAtEndOnNextFocus = true  // Position cursor at end for merge-up
                 focusedNodeId = visible[index - 1].id
+                focusVersion += 1  // Force text field to re-evaluate cursor position
             } else if index < visible.count - 1 {
                 focusedNodeId = visible[index + 1].id
             } else {
