@@ -128,6 +128,14 @@ struct ContentView: View {
                 collapsedNodeIds = initialCollapsed
                 WindowManager.shared.registerTabCollapseState(windowId: windowId, collapsedNodeIds: initialCollapsed)
                 print("[Launch] Collapsed all \(initialCollapsed.count) nodes with children")
+
+                // Focus today's date node on launch (cursor lands on the current day)
+                if doc.focusedNodeId == nil,
+                   zoomedNodeId == nil,
+                   let todayNode = DateStructureManager.shared.todayDateNode(in: doc) {
+                    doc.focusedNodeId = todayNode.id
+                    doc.focusVersion += 1
+                }
             }
 
             // Set up CloudKit per-node sync engine (iOS 17+/macOS 14+)

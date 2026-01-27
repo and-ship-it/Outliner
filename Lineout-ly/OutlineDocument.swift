@@ -32,6 +32,10 @@ final class OutlineDocument {
     /// Takes priority over cursorAtEndOnNextFocus. Reset to nil after use.
     var cursorOffsetOnNextFocus: Int? = nil
 
+    /// When set, focus should go to this node after zoom-out completes.
+    /// Reset to nil after use.
+    var focusTargetAfterZoomOut: UUID? = nil
+
     /// Increments to force a focus refresh even when focusedNodeId hasn't changed
     var focusVersion: Int = 0
 
@@ -477,12 +481,21 @@ final class OutlineDocument {
             zoomedNodeId = nil
             return
         }
+        let zoomedId = zoomed.id
         // Don't zoom to invisible root
         if parent.isRoot {
             // Going to root - delete empty auto-created bullet
-            deleteNodeIfEmpty(zoomed.id)
+            deleteNodeIfEmpty(zoomedId)
+            // If node still exists, focus it after zoom out
+            if root.find(id: zoomedId) != nil {
+                focusTargetAfterZoomOut = zoomedId
+            }
             zoomedNodeId = nil
         } else {
+            // If node still exists, focus it after zoom out
+            if root.find(id: zoomedId) != nil {
+                focusTargetAfterZoomOut = zoomedId
+            }
             zoomedNodeId = parent.id
         }
     }

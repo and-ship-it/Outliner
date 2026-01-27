@@ -318,6 +318,26 @@ struct OutlineView: View {
     private func ensureFocusInZoomedView() {
         let doc = effectiveDocument
 
+        // If we have a focus target from zoom-out, use it instead of default behavior
+        if let targetId = doc.focusTargetAfterZoomOut {
+            doc.focusTargetAfterZoomOut = nil
+            // Ensure the target node's parent is expanded so it's visible
+            if let targetNode = doc.root.find(id: targetId) {
+                if let parent = targetNode.parent {
+                    collapsedNodeIds.remove(parent.id)
+                }
+            }
+            // Ensure zoomed node is always expanded
+            if let zoomed = zoomedNode {
+                collapsedNodeIds.remove(zoomed.id)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                doc.focusedNodeId = targetId
+                doc.focusVersion += 1
+            }
+            return
+        }
+
         // Ensure zoomed node is always expanded
         if let zoomed = zoomedNode {
             collapsedNodeIds.remove(zoomed.id)
@@ -908,6 +928,7 @@ struct OutlineView: View {
             if let zoomedId = zoomedNodeId,
                let zoomed = effectiveDocument.root.find(id: zoomedId),
                let parent = zoomed.parent, !parent.isRoot {
+                effectiveDocument.focusTargetAfterZoomOut = zoomedId
                 zoomedNodeId = parent.id
             } else {
                 // At root of old week — close it
@@ -915,6 +936,9 @@ struct OutlineView: View {
             }
             return
         }
+
+        // Remember the node we're zooming out of (to keep cursor on it)
+        let previousZoomedId = zoomedNodeId
 
         // Resolve parent before cleanup (deletion removes node from tree)
         let parentZoom: UUID? = {
@@ -930,6 +954,9 @@ struct OutlineView: View {
             // If node was deleted, remove its tab from history
             if document.root.find(id: zoomedId) == nil {
                 navigationHistory.removeZoomId(zoomedId)
+            } else {
+                // Node still exists — focus it after zoom out
+                document.focusTargetAfterZoomOut = previousZoomedId
             }
         }
 
@@ -1187,10 +1214,15 @@ struct OutlineView: View {
     /// Zoom out one level
     func zoomOut() {
         guard let zoomed = zoomedNode else { return }
+        let zoomedId = zoomed.id
         // Resolve parent before cleanup (deletion removes node from tree)
         let parentZoom: UUID? = (zoomed.parent.flatMap { $0.isRoot ? nil : $0 })?.id
         // Clean up empty node before leaving
-        document.deleteNodeIfEmpty(zoomed.id)
+        document.deleteNodeIfEmpty(zoomedId)
+        // If node still exists, focus it after zoom out
+        if document.root.find(id: zoomedId) != nil {
+            document.focusTargetAfterZoomOut = zoomedId
+        }
         zoomedNodeId = parentZoom
     }
 

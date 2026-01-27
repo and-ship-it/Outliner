@@ -1095,6 +1095,10 @@ struct NodeRow: View {
                 let parentZoom: UUID? = (zoomed.parent.flatMap { $0.isRoot ? nil : $0 })?.id
                 // Clean up empty node before leaving
                 document.deleteNodeIfEmpty(zoomedId)
+                // If node still exists, focus it after zoom out
+                if document.root.find(id: zoomedId) != nil {
+                    document.focusTargetAfterZoomOut = zoomedId
+                }
                 zoomedNodeId = parentZoom
             }
         case .zoomToRoot:

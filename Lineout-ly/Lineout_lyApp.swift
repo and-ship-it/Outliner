@@ -362,6 +362,10 @@ struct OutlineCommands: Commands {
         let parentZoom: UUID? = (zoomed.parent.flatMap { $0.isRoot ? nil : $0 })?.id
         // Clean up empty node before leaving
         doc.deleteNodeIfEmpty(zoomedId)
+        // If node still exists, focus it after zoom out
+        if doc.root.find(id: zoomedId) != nil {
+            doc.focusTargetAfterZoomOut = zoomedId
+        }
         withAnimation(.easeOut(duration: 0.2)) {
             zoomedNodeIdBinding?.wrappedValue = parentZoom
             doc.focusVersion += 1  // Force cursor refresh
