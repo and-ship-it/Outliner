@@ -30,6 +30,9 @@ struct MasonryTabOverview: View {
     @State private var searchQuery: String = ""
     @State private var showingSettings: Bool = false
     @State private var previousWeekFiles: [String] = []
+    #if os(iOS)
+    @FocusState private var isSearchFocused: Bool
+    #endif
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -96,12 +99,13 @@ struct MasonryTabOverview: View {
 
             VStack(spacing: 0) {
                 topBar
-                searchBar
-                    .padding(.horizontal, horizontalPadding)
-                    .padding(.bottom, 12)
 
                 // Masonry grid
                 ScrollView(.vertical, showsIndicators: true) {
+                    searchBar
+                        .padding(.horizontal, horizontalPadding)
+                        .padding(.bottom, 12)
+
                     let columns = masonryColumns
                     HStack(alignment: .top, spacing: columnSpacing) {
                         // Left column
@@ -173,6 +177,7 @@ struct MasonryTabOverview: View {
         .onAppear {
             previousWeekFiles = iCloudManager.shared.listAllWeekFiles()
             #if os(iOS)
+            isSearchFocused = false
             dismissKeyboard()
             #endif
         }
@@ -198,9 +203,9 @@ struct MasonryTabOverview: View {
                 Image(systemName: "xmark")
                     #if os(iOS)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color.white.opacity(0.2)))
+                    .background(Circle().fill(Color.primary.opacity(0.1)))
                     #else
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.secondary)
@@ -242,9 +247,9 @@ struct MasonryTabOverview: View {
                 Image(systemName: "ellipsis")
                     #if os(iOS)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .frame(width: 36, height: 36)
-                    .background(Circle().fill(Color.white.opacity(0.2)))
+                    .background(Circle().fill(Color.primary.opacity(0.1)))
                     #else
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.secondary)
@@ -268,7 +273,7 @@ struct MasonryTabOverview: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 15))
                 #if os(iOS)
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(.secondary)
                 #else
                 .foregroundColor(.secondary)
                 #endif
@@ -277,18 +282,22 @@ struct MasonryTabOverview: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
                 #if os(iOS)
-                .foregroundColor(.white)
-                .tint(.white)
+                .focused($isSearchFocused)
+                .foregroundColor(.primary)
+                .tint(.accentColor)
                 #endif
 
             if !searchQuery.isEmpty {
                 Button {
                     searchQuery = ""
+                    #if os(iOS)
+                    isSearchFocused = false
+                    #endif
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14))
                         #if os(iOS)
-                        .foregroundColor(.white.opacity(0.5))
+                        .foregroundColor(.secondary)
                         #else
                         .foregroundColor(.secondary)
                         #endif
@@ -303,7 +312,7 @@ struct MasonryTabOverview: View {
         .background(
             RoundedRectangle(cornerRadius: 10)
                 #if os(iOS)
-                .fill(Color.white.opacity(0.15))
+                .fill(Color.primary.opacity(0.08))
                 #else
                 .fill(Color.secondary.opacity(0.1))
                 #endif
@@ -407,19 +416,11 @@ struct MasonryTabOverview: View {
             HStack(spacing: 10) {
                 Image(systemName: "calendar")
                     .font(.system(size: 14))
-                    #if os(iOS)
-                    .foregroundColor(.white.opacity(0.7))
-                    #else
                     .foregroundColor(.secondary)
-                    #endif
 
                 Text(displayName)
                     .font(.system(size: 14, weight: isOpen ? .semibold : .regular))
-                    #if os(iOS)
-                    .foregroundColor(.white)
-                    #else
                     .foregroundColor(.primary)
-                    #endif
 
                 Spacer()
 
@@ -431,18 +432,14 @@ struct MasonryTabOverview: View {
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11))
-                    #if os(iOS)
-                    .foregroundColor(.white.opacity(0.5))
-                    #else
                     .foregroundColor(.secondary)
-                    #endif
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     #if os(iOS)
-                    .fill(Color.white.opacity(0.1))
+                    .fill(Color.primary.opacity(0.06))
                     #else
                     .fill(Color.secondary.opacity(0.08))
                     #endif
@@ -465,19 +462,11 @@ struct MasonryTabOverview: View {
             HStack(spacing: 10) {
                 Image(systemName: "trash")
                     .font(.system(size: 14))
-                    #if os(iOS)
-                    .foregroundColor(.white.opacity(0.7))
-                    #else
                     .foregroundColor(.secondary)
-                    #endif
 
                 Text("Trash")
                     .font(.system(size: 14))
-                    #if os(iOS)
-                    .foregroundColor(.white)
-                    #else
                     .foregroundColor(.primary)
-                    #endif
 
                 Spacer()
 
@@ -485,27 +474,19 @@ struct MasonryTabOverview: View {
                 if trashCount > 0 {
                     Text("\(trashCount)")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
-                        #if os(iOS)
-                        .foregroundColor(.white.opacity(0.5))
-                        #else
                         .foregroundColor(.secondary)
-                        #endif
                 }
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11))
-                    #if os(iOS)
-                    .foregroundColor(.white.opacity(0.5))
-                    #else
                     .foregroundColor(.secondary)
-                    #endif
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     #if os(iOS)
-                    .fill(Color.white.opacity(0.1))
+                    .fill(Color.primary.opacity(0.06))
                     #else
                     .fill(Color.secondary.opacity(0.08))
                     #endif

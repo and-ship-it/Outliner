@@ -363,12 +363,12 @@ struct OutlineCommands: Commands {
         guard let doc = document,
               let zoomedId = zoomedNodeIdBinding?.wrappedValue,
               let zoomed = doc.root.find(id: zoomedId) else { return }
+        // Resolve parent before cleanup (deletion removes node from tree)
+        let parentZoom: UUID? = (zoomed.parent.flatMap { $0.isRoot ? nil : $0 })?.id
+        // Clean up empty node before leaving
+        doc.deleteNodeIfEmpty(zoomedId)
         withAnimation(.easeOut(duration: 0.2)) {
-            if let parent = zoomed.parent, !parent.isRoot {
-                zoomedNodeIdBinding?.wrappedValue = parent.id
-            } else {
-                zoomedNodeIdBinding?.wrappedValue = nil
-            }
+            zoomedNodeIdBinding?.wrappedValue = parentZoom
             doc.focusVersion += 1  // Force cursor refresh
         }
     }

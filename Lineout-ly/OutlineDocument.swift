@@ -1422,10 +1422,13 @@ final class OutlineDocument {
     }
 
     /// Check if the focused node can be outdented (has a grandparent to move to)
-    func canOutdent() -> Bool {
+    /// If zoomBoundaryId is set, prevents outdenting direct children of the zoomed node
+    func canOutdent(zoomBoundaryId: UUID? = nil) -> Bool {
         guard let focused = focusedNode,
               let parent = focused.parent,
               parent.parent != nil else { return false }
+        // Cannot outdent beyond zoom boundary — zoom out first
+        if let boundaryId = zoomBoundaryId, parent.id == boundaryId { return false }
         return true
     }
 
@@ -1533,10 +1536,10 @@ final class OutlineDocument {
         structureDidChange(dirtyNodeIds: movedIds)
     }
 
-    func outdent() {
+    func outdent(zoomBoundaryId: UUID? = nil) {
         // Multi-selection outdent
         if !selectedNodeIds.isEmpty {
-            outdentSelected()
+            outdentSelected(zoomBoundaryId: zoomBoundaryId)
             return
         }
 
@@ -1547,6 +1550,8 @@ final class OutlineDocument {
         // Don't allow outdenting date nodes or reminder metadata children
         guard !focused.isDateNode else { return }
         guard focused.reminderChildType == nil else { return }
+        // Cannot outdent beyond zoom boundary — zoom out first
+        if let boundaryId = zoomBoundaryId, parent.id == boundaryId { return }
 
         // Get parent's index to insert after it
         guard let parentIndex = parent.indexInParent else { return }
@@ -1568,7 +1573,7 @@ final class OutlineDocument {
     }
 
     /// Outdent all selected nodes
-    func outdentSelected() {
+    func outdentSelected(zoomBoundaryId: UUID? = nil) {
         // Get selected nodes sorted by position (process from top to bottom)
         let selectedNodes = selectedNodeIds.compactMap { root.find(id: $0) }
         guard !selectedNodes.isEmpty else { return }
@@ -1594,6 +1599,9 @@ final class OutlineDocument {
 
             // Skip if parent is also selected (will be moved together)
             if selectedNodeIds.contains(parent.id) { continue }
+
+            // Cannot outdent beyond zoom boundary
+            if let boundaryId = zoomBoundaryId, parent.id == boundaryId { continue }
 
             restoreInfos.append((node.id, parent.id, node.indexInParent ?? 0))
 

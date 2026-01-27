@@ -287,6 +287,11 @@ struct OutlineView: View {
                 closeOldWeek()
                 return
             }
+            // Prune deleted nodes from navigation history (cleanup from deleteNodeIfEmpty)
+            if !isOldWeekMode {
+                let allNodeIds = Set(document.root.flattened().map(\.id))
+                navigationHistory.pruneDeletedNodes(existingNodeIds: allNodeIds)
+            }
             // Sync zoom with navigation history (navigates to existing tab or creates new)
             if !isOldWeekMode {
                 navigationHistory.navigateOrPush(newValue)
@@ -313,6 +318,11 @@ struct OutlineView: View {
     private func ensureFocusInZoomedView() {
         let doc = effectiveDocument
 
+        // Ensure zoomed node is always expanded
+        if let zoomed = zoomedNode {
+            collapsedNodeIds.remove(zoomed.id)
+        }
+
         // If zoomed and no children, create an empty child (only in normal mode)
         if let zoomed = zoomedNode, zoomed.children.isEmpty {
             if isOldWeekMode {
@@ -324,8 +334,11 @@ struct OutlineView: View {
             // Use createChild which handles structure change properly
             doc.focusedNodeId = zoomed.id
             if let emptyChild = doc.createChild() {
+                // If parent is empty, focus parent so user can name it first
+                // If parent has text, focus the new child
+                let focusTarget = zoomed.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? zoomed.id : emptyChild.id
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    doc.focusedNodeId = emptyChild.id
+                    doc.focusedNodeId = focusTarget
                     doc.focusVersion += 1
                 }
             }
@@ -358,16 +371,13 @@ struct OutlineView: View {
             // Zoomed: show the zoomed node itself at depth 0 (as editable header)
             result.append((node: zoomed, depth: 0, treeLines: []))
 
-            // Then show children at depth 1+
-            // Only show children if zoomed node is not collapsed
-            if !collapsedNodeIds.contains(zoomed.id) {
-                let children = flattenedVisible(from: zoomed)
-                for child in children {
-                    // Depth is relative to zoomed node (so direct children are depth 1)
-                    let effectiveDepth = child.depth - zoomed.depth
-                    let treeLines = calculateTreeLines(for: child, zoomDepth: zoomed.depth)
-                    result.append((node: child, depth: effectiveDepth, treeLines: treeLines))
-                }
+            // Always show children — the zoomed parent cannot be collapsed
+            let children = flattenedVisible(from: zoomed)
+            for child in children {
+                // Depth is relative to zoomed node (so direct children are depth 1)
+                let effectiveDepth = child.depth - zoomed.depth
+                let treeLines = calculateTreeLines(for: child, zoomDepth: zoomed.depth)
+                result.append((node: child, depth: effectiveDepth, treeLines: treeLines))
             }
         } else {
             // Not zoomed - show all visible nodes from root
@@ -837,29 +847,22 @@ struct OutlineView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isEditMode)
     }
 
-    /// Create a new bullet and zoom into it
-    /// The session name will be determined by the first 5 words of content
+    /// Create a new bullet under today's date and zoom into it
+    /// Since the new node has no title, cursor lands on the parent so user can name it.
+    /// An empty child is auto-created by zoomIn for when the user starts adding content.
     private func createNewZoomLevel() {
+        let newNode = OutlineNode(title: "")
         if let todayNode = DateStructureManager.shared.todayDateNode(in: document) {
-            // Create under today's date node and zoom into it
-            let newNode = OutlineNode(title: "")
             todayNode.addChild(newNode)
             collapsedNodeIds.remove(todayNode.id)
-            navigationHistory.navigateOrPush(todayNode.id)
-            zoomedNodeId = todayNode.id
-            document.focusedNodeId = newNode.id
-            document.focusVersion += 1
-            document.structureVersion += 1
-            iCloudManager.shared.scheduleAutoSave(for: document)
         } else {
-            // Fallback: add to root level
-            let newNode = OutlineNode(title: "")
             document.root.addChild(newNode)
-            navigationHistory.navigateOrPush(newNode.id)
-            zoomedNodeId = newNode.id
-            document.structureVersion += 1
-            iCloudManager.shared.scheduleAutoSave(for: document)
         }
+        document.structureVersion += 1
+        iCloudManager.shared.scheduleAutoSave(for: document)
+        // Zoom into the new node — smart cursor focuses parent (empty title)
+        // and creates an empty child ready for content
+        zoomIn(to: newNode)
     }
     #endif
 
@@ -876,6 +879,10 @@ struct OutlineView: View {
         // Delete empty auto-created bullet before going home
         if let zoomedId = zoomedNodeId {
             document.deleteNodeIfEmpty(zoomedId)
+            // If node was deleted, remove its tab from history
+            if document.root.find(id: zoomedId) == nil {
+                navigationHistory.removeZoomId(zoomedId)
+            }
         }
         withAnimation(.easeOut(duration: 0.2)) {
             zoomedNodeId = nil
@@ -912,6 +919,23 @@ struct OutlineView: View {
             return
         }
 
+        // Resolve parent before cleanup (deletion removes node from tree)
+        let parentZoom: UUID? = {
+            guard let zoomedId = zoomedNodeId,
+                  let zoomed = document.root.find(id: zoomedId),
+                  let parent = zoomed.parent, !parent.isRoot else { return nil }
+            return parent.id
+        }()
+
+        // Clean up empty node before leaving (e.g., plus button created but user backed out)
+        if let zoomedId = zoomedNodeId {
+            document.deleteNodeIfEmpty(zoomedId)
+            // If node was deleted, remove its tab from history
+            if document.root.find(id: zoomedId) == nil {
+                navigationHistory.removeZoomId(zoomedId)
+            }
+        }
+
         // Use navigation history to go back if possible
         if navigationHistory.canGoBack {
             navigationHistory.pop()
@@ -920,15 +944,7 @@ struct OutlineView: View {
         }
 
         // Fallback: navigate up the tree hierarchy
-        if let zoomedId = zoomedNodeId,
-           let zoomed = document.root.find(id: zoomedId) {
-            if let parent = zoomed.parent, !parent.isRoot {
-                zoomedNodeId = parent.id
-            } else {
-                document.deleteNodeIfEmpty(zoomedId)
-                zoomedNodeId = nil
-            }
-        }
+        zoomedNodeId = parentZoom
     }
 
     // MARK: - Old Week Overlay
@@ -1095,28 +1111,22 @@ struct OutlineView: View {
         }
     }
 
-    /// Create a new bullet and zoom into it (macOS)
+    /// Create a new bullet under today's date and zoom into it (macOS)
+    /// Since the new node has no title, cursor lands on the parent so user can name it.
+    /// An empty child is auto-created by zoomIn for when the user starts adding content.
     private func macOSCreateNewZoomLevel() {
+        let newNode = OutlineNode(title: "")
         if let todayNode = DateStructureManager.shared.todayDateNode(in: document) {
-            // Create under today's date node and zoom into it
-            let newNode = OutlineNode(title: "")
             todayNode.addChild(newNode)
             collapsedNodeIds.remove(todayNode.id)
-            navigationHistory.navigateOrPush(todayNode.id)
-            zoomedNodeId = todayNode.id
-            document.focusedNodeId = newNode.id
-            document.focusVersion += 1
-            document.structureVersion += 1
-            iCloudManager.shared.scheduleAutoSave(for: document)
         } else {
-            // Fallback: add to root level
-            let newNode = OutlineNode(title: "")
             document.root.addChild(newNode)
-            navigationHistory.navigateOrPush(newNode.id)
-            zoomedNodeId = newNode.id
-            document.structureVersion += 1
-            iCloudManager.shared.scheduleAutoSave(for: document)
         }
+        document.structureVersion += 1
+        iCloudManager.shared.scheduleAutoSave(for: document)
+        // Zoom into the new node — smart cursor focuses parent (empty title)
+        // and creates an empty child ready for content
+        zoomIn(to: newNode)
     }
     #endif
 
@@ -1154,14 +1164,20 @@ struct OutlineView: View {
         guard let target else { return }
 
         zoomedNodeId = target.id
-        // Ensure zoomed node is expanded
+        // Ensure zoomed node is expanded (zoomed parent cannot be collapsed)
         collapsedNodeIds.remove(target.id)
 
-        // Create empty child if none exist, and focus on first child
+        // Create empty child if none exist
         if target.children.isEmpty {
             let emptyChild = OutlineNode(title: "")
             target.addChild(emptyChild)
-            document.focusedNodeId = emptyChild.id
+            // If parent is empty, focus parent so user can name it first
+            // If parent has text, focus the new child so user can start adding content
+            if target.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                document.focusedNodeId = target.id
+            } else {
+                document.focusedNodeId = emptyChild.id
+            }
             document.structureVersion += 1
             iCloudManager.shared.scheduleAutoSave(for: document)
         } else {
@@ -1174,11 +1190,11 @@ struct OutlineView: View {
     /// Zoom out one level
     func zoomOut() {
         guard let zoomed = zoomedNode else { return }
-        if let parent = zoomed.parent, !parent.isRoot {
-            zoomedNodeId = parent.id
-        } else {
-            zoomedNodeId = nil
-        }
+        // Resolve parent before cleanup (deletion removes node from tree)
+        let parentZoom: UUID? = (zoomed.parent.flatMap { $0.isRoot ? nil : $0 })?.id
+        // Clean up empty node before leaving
+        document.deleteNodeIfEmpty(zoomed.id)
+        zoomedNodeId = parentZoom
     }
 
     /// Zoom to root (reset zoom)

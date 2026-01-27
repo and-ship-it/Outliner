@@ -415,14 +415,14 @@ struct NodeRow: View {
             }
             Button {
                 document.focusedNodeId = node.id
-                document.outdent()
+                document.outdent(zoomBoundaryId: zoomedNodeId)
             } label: {
                 Label("Outdent", systemImage: "decrease.indent")
             }
         }
 
-        // Collapse / Expand (only for parent nodes)
-        if node.hasChildren {
+        // Collapse / Expand (only for parent nodes, and not for the zoomed parent)
+        if node.hasChildren && node.id != zoomedNodeId {
             Section {
                 if collapsedNodeIds.contains(node.id) {
                     Button {
@@ -558,6 +558,8 @@ struct NodeRow: View {
                 isOverdue: isOverdue,
                 scale: scale,
                 onTap: {
+                    // Cannot collapse the zoomed parent node
+                    guard node.id != zoomedNodeId else { return }
                     withAnimation(.easeOut(duration: 0.15)) {
                         // Toggle per-tab collapse state
                         if collapsedNodeIds.contains(node.id) {
@@ -643,18 +645,18 @@ struct NodeRow: View {
         // Focus this node first
         document.focusedNodeId = node.id
 
-        // Try to outdent
-        let canOutdent = document.canOutdent()
+        // Try to outdent (respects zoom boundary)
+        let canOutdent = document.canOutdent(zoomBoundaryId: zoomedNodeId)
         if canOutdent {
             // Success haptic
             let generator = UIImpactFeedbackGenerator(style: .medium)
             generator.impactOccurred()
 
             withAnimation(.easeOut(duration: 0.15)) {
-                document.outdent()
+                document.outdent(zoomBoundaryId: zoomedNodeId)
             }
         } else {
-            // Error haptic - can't outdent (already at root level)
+            // Error haptic - can't outdent (at root level or zoom boundary)
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.error)
         }
@@ -673,14 +675,20 @@ struct NodeRow: View {
     /// Zoom into a specific node, creating an empty child if needed and focusing on first child
     private func performZoomIn(to target: OutlineNode) {
         zoomedNodeId = target.id
-        // Ensure zoomed node is expanded
+        // Ensure zoomed node is expanded (zoomed parent cannot be collapsed)
         collapsedNodeIds.remove(target.id)
 
-        // Create empty child if none exist, and focus on first child
+        // Create empty child if none exist
         if target.children.isEmpty {
             let emptyChild = OutlineNode(title: "")
             target.addChild(emptyChild)
-            document.focusedNodeId = emptyChild.id
+            // If parent is empty, focus parent so user can name it first
+            // If parent has text, focus the new child so user can start adding content
+            if target.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                document.focusedNodeId = target.id
+            } else {
+                document.focusedNodeId = emptyChild.id
+            }
             document.structureVersion += 1
             iCloudManager.shared.scheduleAutoSave(for: document)
         } else {
@@ -1004,12 +1012,10 @@ struct NodeRow: View {
         switch action {
         case .collapse:
             // No animation - prevents focus/cursor issues during view hierarchy changes
-            print("[DEBUG] collapse: focusedNode='\(document.focusedNode?.title.prefix(20) ?? "nil")', hasChildren=\(document.focusedNode?.hasChildren ?? false), zoomedNodeId=\(zoomedNodeId?.uuidString.prefix(8) ?? "nil")")
             if let focused = document.focusedNode, focused.hasChildren {
-                print("[DEBUG] collapse: inserting into collapsedNodeIds")
+                // Cannot collapse the zoomed parent node
+                guard focused.id != zoomedNodeId else { break }
                 collapsedNodeIds.insert(focused.id)
-            } else {
-                print("[DEBUG] collapse: NOT collapsing - either no focus or no children")
             }
         case .expand:
             // No animation - prevents focus/cursor issues during view hierarchy changes
@@ -1018,8 +1024,8 @@ struct NodeRow: View {
             }
         case .collapseAll:
             if let focused = document.focusedNode {
-                // Collapse the focused node itself
-                if focused.hasChildren {
+                // Collapse the focused node itself (unless it's the zoomed parent)
+                if focused.hasChildren && focused.id != zoomedNodeId {
                     collapsedNodeIds.insert(focused.id)
                 }
                 // Collapse all descendants that have children
@@ -1044,7 +1050,7 @@ struct NodeRow: View {
         case .indent:
             document.indent()
         case .outdent:
-            document.outdent()
+            document.outdent(zoomBoundaryId: zoomedNodeId)
         case .createSiblingAbove:
             // If focused node is the zoomed node, create a child instead (sibling would be outside zoom)
             if node.id == zoomedNodeId {
@@ -1080,11 +1086,11 @@ struct NodeRow: View {
             // No animation - prevents focus/cursor issues during view hierarchy changes
             if let zoomedId = zoomedNodeId,
                let zoomed = document.root.find(id: zoomedId) {
-                if let parent = zoomed.parent, !parent.isRoot {
-                    zoomedNodeId = parent.id
-                } else {
-                    zoomedNodeId = nil
-                }
+                // Resolve parent before cleanup (deletion removes node from tree)
+                let parentZoom: UUID? = (zoomed.parent.flatMap { $0.isRoot ? nil : $0 })?.id
+                // Clean up empty node before leaving
+                document.deleteNodeIfEmpty(zoomedId)
+                zoomedNodeId = parentZoom
             }
         case .zoomToRoot:
             // Delete empty auto-created bullet before going home

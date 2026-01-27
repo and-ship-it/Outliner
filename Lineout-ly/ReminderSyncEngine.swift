@@ -299,6 +299,35 @@ final class ReminderSyncEngine {
                     nodeChanged = true
                 }
 
+                // Sync due date — detect date changes and move node accordingly
+                if let remDueDate = reminder.dueDateComponents.flatMap({ Calendar.current.date(from: $0) }) {
+                    let currentDate = DateStructureManager.shared.inferredDueDate(for: node)
+                    let cal = Calendar.current
+                    let remDay = cal.startOfDay(for: remDueDate)
+                    let curDay = currentDate.map { cal.startOfDay(for: $0) }
+
+                    if remDay != curDay {
+                        // Due date changed — determine if within or beyond current week
+                        let weekDatesForMove = DateStructureManager.shared.currentWeekDates()
+                        let weekStartDays = Set(weekDatesForMove.map { cal.startOfDay(for: $0) })
+
+                        if weekStartDays.contains(remDay),
+                           let newDateNode = DateStructureManager.shared.dateNode(for: remDueDate, in: document) {
+                            // Within current week — move node to new date
+                            node.removeFromParent()
+                            insertNodeSortedByTime(node, under: newDateNode)
+                            didChange = true
+                            print("[Reminders] Moved reminder to new date: \(node.title) → \(newDateNode.title)")
+                        } else {
+                            // Beyond current week — handle detachment
+                            handleReminderMovedBeyondWeek(node: node, reminderTitle: reminder.title ?? "")
+                            didChange = true
+                            print("[Reminders] Reminder moved beyond week: \(node.title)")
+                            continue // Node was detached, skip further updates
+                        }
+                    }
+                }
+
                 // Sync notes → metadata child
                 if syncNotesInbound(from: reminder, to: node) { nodeChanged = true }
 
@@ -563,6 +592,36 @@ final class ReminderSyncEngine {
         let metaChildren = node.children.filter { $0.reminderChildType != nil }
         for child in metaChildren {
             child.removeFromParent()
+        }
+    }
+
+    /// Handle a reminder whose due date moved beyond the current week.
+    /// - If the node has user-created children: keep them as a stub with "(moved)" suffix
+    /// - If only metadata children (or none): delete the node entirely
+    private func handleReminderMovedBeyondWeek(node: OutlineNode, reminderTitle: String) {
+        // Identify user-created children (not reminder metadata)
+        let userChildren = node.children.filter { $0.reminderChildType == nil }
+
+        if userChildren.isEmpty {
+            // No user content — delete the node entirely
+            node.removeFromParent()
+            print("[Reminders] Deleted node with no user content: \(reminderTitle)")
+        } else {
+            // User content exists — convert to a plain stub
+            // Remove reminder metadata children (note, link)
+            removeMetadataChildren(from: node)
+            // Append "(moved)" to the title
+            let baseName = reminderTitle.isEmpty ? node.title : reminderTitle
+            node.title = baseName + " (moved)"
+            // Strip all reminder sync data so it becomes a plain bullet
+            node.reminderIdentifier = nil
+            node.reminderListName = nil
+            node.reminderTimeHour = nil
+            node.reminderTimeMinute = nil
+            // Convert from task to plain bullet
+            node.isTask = false
+            node.isTaskCompleted = false
+            print("[Reminders] Converted to stub with \(userChildren.count) user children: \(node.title)")
         }
     }
 

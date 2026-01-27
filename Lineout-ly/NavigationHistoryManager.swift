@@ -92,6 +92,27 @@ final class NavigationHistoryManager {
         return true
     }
 
+    /// Remove a specific zoom ID from history (e.g., when node is deleted)
+    func removeZoomId(_ zoomId: UUID) {
+        guard let index = history.firstIndex(where: { $0 == zoomId }) else { return }
+        remove(at: index)
+    }
+
+    /// Remove any history entries whose nodes no longer exist in the document
+    func pruneDeletedNodes(existingNodeIds: Set<UUID>) {
+        var indicesToRemove: [Int] = []
+        for (index, zoomId) in history.enumerated() {
+            guard let id = zoomId else { continue } // nil = home, always valid
+            if !existingNodeIds.contains(id) {
+                indicesToRemove.append(index)
+            }
+        }
+        // Remove in reverse order to maintain indices
+        for index in indicesToRemove.reversed() {
+            remove(at: index)
+        }
+    }
+
     /// Clear history and start fresh (on session end)
     func clear() {
         history = [nil]
