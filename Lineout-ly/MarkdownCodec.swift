@@ -87,6 +87,15 @@ struct MarkdownCodec {
                 parent.addChild(node)
                 index += 1
 
+                // Check for metadata comment on the next line (reminder or rtype)
+                if index < lines.count {
+                    let metaLine = lines[index].trimmingCharacters(in: .whitespaces)
+                    if (metaLine.hasPrefix("<!-- reminder:") || metaLine.hasPrefix("<!-- rtype:")) && metaLine.hasSuffix("-->") {
+                        parseReminderMetadata(metaLine, into: node)
+                        index += 1
+                    }
+                }
+
                 // Parse body (non-bullet lines at deeper indent)
                 var bodyLines: [String] = []
                 while index < lines.count {
@@ -167,6 +176,50 @@ struct MarkdownCodec {
         return (true, indent, content.hasPrefix(bulletPrefix))
     }
 
+    // MARK: - Reminder Metadata
+
+    /// Parse a reminder metadata comment like `<!-- reminder:ABC123 list:Shopping time:9:30 -->`
+    private static func parseReminderMetadata(_ line: String, into node: OutlineNode) {
+        // Strip <!-- and -->
+        var content = line
+            .replacingOccurrences(of: "<!--", with: "")
+            .replacingOccurrences(of: "-->", with: "")
+            .trimmingCharacters(in: .whitespaces)
+
+        // Parse "reminder:ID" and optionally "list:Name" and "time:HH:MM"
+        if content.hasPrefix("reminder:") {
+            content = String(content.dropFirst("reminder:".count))
+
+            // Extract time:HH:MM if present
+            if let timeRange = content.range(of: " time:") {
+                let afterTime = String(content[timeRange.upperBound...])
+                // Time value is everything after "time:" until end
+                let timeParts = afterTime.split(separator: ":")
+                if timeParts.count == 2,
+                   let hour = Int(timeParts[0]),
+                   let minute = Int(timeParts[1]) {
+                    node.reminderTimeHour = hour
+                    node.reminderTimeMinute = minute
+                }
+                // Remove time part from content for further parsing
+                content = String(content[content.startIndex..<timeRange.lowerBound])
+            }
+
+            // Extract list:Name if present
+            if let listRange = content.range(of: " list:") {
+                node.reminderIdentifier = String(content[content.startIndex..<listRange.lowerBound])
+                node.reminderListName = String(content[listRange.upperBound...])
+            } else {
+                node.reminderIdentifier = content
+            }
+        }
+
+        // Parse "rtype:note" or "rtype:link" for metadata children
+        if content.hasPrefix("rtype:") {
+            node.reminderChildType = String(content.dropFirst("rtype:".count))
+        }
+    }
+
     // MARK: - Serialize
 
     /// Serialize an OutlineNode tree to markdown string
@@ -186,6 +239,23 @@ struct MarkdownCodec {
         // Title line (with optional task checkbox)
         let taskPrefix = node.isTask ? (node.isTaskCompleted ? "[x] " : "[ ] ") : ""
         lines.append("\(indentString)\(bulletPrefix)\(taskPrefix)\(node.title)")
+
+        // Reminder metadata comment (if synced with Apple Reminders)
+        if let reminderId = node.reminderIdentifier {
+            let listPart = node.reminderListName.map { " list:\($0)" } ?? ""
+            var timePart = ""
+            if let hour = node.reminderTimeHour, let minute = node.reminderTimeMinute {
+                timePart = " time:\(hour):\(String(format: "%02d", minute))"
+            }
+            let bodyIndent = String(repeating: " ", count: (indent + 1) * indentSize)
+            lines.append("\(bodyIndent)<!-- reminder:\(reminderId)\(listPart)\(timePart) -->")
+        }
+
+        // Reminder child type metadata (for note/link metadata children)
+        if let childType = node.reminderChildType {
+            let bodyIndent = String(repeating: " ", count: (indent + 1) * indentSize)
+            lines.append("\(bodyIndent)<!-- rtype:\(childType) -->")
+        }
 
         // Body (if present)
         if node.hasBody {

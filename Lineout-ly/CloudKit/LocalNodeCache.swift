@@ -103,6 +103,13 @@ struct CodableNode: Codable {
     var sortIndex: Int64
     var lastModifiedLocally: Date
     var cloudKitSystemFields: Data?
+    var reminderIdentifier: String?
+    var reminderListName: String?
+    var reminderTimeHour: Int?
+    var reminderTimeMinute: Int?
+    var reminderChildType: String?
+    var isDateNode: Bool?
+    var dateNodeDate: Date?
     var children: [CodableNode]
 
     /// Create from an OutlineNode
@@ -116,6 +123,13 @@ struct CodableNode: Codable {
         self.sortIndex = node.sortIndex
         self.lastModifiedLocally = node.lastModifiedLocally
         self.cloudKitSystemFields = node.cloudKitSystemFields
+        self.reminderIdentifier = node.reminderIdentifier
+        self.reminderListName = node.reminderListName
+        self.reminderTimeHour = node.reminderTimeHour
+        self.reminderTimeMinute = node.reminderTimeMinute
+        self.reminderChildType = node.reminderChildType
+        self.isDateNode = node.isDateNode
+        self.dateNodeDate = node.dateNodeDate
         self.children = node.children.map { CodableNode(from: $0) }
     }
 
@@ -131,7 +145,14 @@ struct CodableNode: Codable {
             children: children.map { $0.toOutlineNode() },
             sortIndex: sortIndex,
             lastModifiedLocally: lastModifiedLocally,
-            cloudKitSystemFields: cloudKitSystemFields
+            cloudKitSystemFields: cloudKitSystemFields,
+            reminderIdentifier: reminderIdentifier,
+            reminderListName: reminderListName,
+            reminderTimeHour: reminderTimeHour,
+            reminderTimeMinute: reminderTimeMinute,
+            reminderChildType: reminderChildType,
+            isDateNode: isDateNode ?? false,
+            dateNodeDate: dateNodeDate
         )
         return node
     }

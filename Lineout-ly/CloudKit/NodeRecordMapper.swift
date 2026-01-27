@@ -67,6 +67,29 @@ struct NodeRecordMapper {
             record["parentRef"] = nil
         }
 
+        // Reminder sync fields
+        record["reminderIdentifier"] = node.reminderIdentifier as CKRecordValue?
+        record["reminderListName"] = node.reminderListName as CKRecordValue?
+        if let hour = node.reminderTimeHour {
+            record["reminderTimeHour"] = hour as CKRecordValue
+        } else {
+            record["reminderTimeHour"] = nil
+        }
+        if let minute = node.reminderTimeMinute {
+            record["reminderTimeMinute"] = minute as CKRecordValue
+        } else {
+            record["reminderTimeMinute"] = nil
+        }
+        record["reminderChildType"] = node.reminderChildType as CKRecordValue?
+
+        // Date node fields
+        record["isDateNode"] = (node.isDateNode ? 1 : 0) as CKRecordValue
+        if let dateNodeDate = node.dateNodeDate {
+            record["dateNodeDate"] = dateNodeDate as CKRecordValue
+        } else {
+            record["dateNodeDate"] = nil
+        }
+
         return record
     }
 
@@ -83,6 +106,13 @@ struct NodeRecordMapper {
         let sortIndex: Int64
         let modifiedLocally: Date
         let systemFieldsData: Data
+        let reminderIdentifier: String?
+        let reminderListName: String?
+        let reminderTimeHour: Int?
+        let reminderTimeMinute: Int?
+        let reminderChildType: String?
+        let isDateNode: Bool
+        let dateNodeDate: Date?
     }
 
     /// Extract node data from a CKRecord
@@ -102,6 +132,15 @@ struct NodeRecordMapper {
             parentId = UUID(uuidString: parentRef.recordID.recordName)
         }
 
+        // Reminder sync fields
+        let reminderIdentifier = record["reminderIdentifier"] as? String
+        let reminderListName = record["reminderListName"] as? String
+        let reminderTimeHour: Int? = (record["reminderTimeHour"] as? Int64).map { Int($0) }
+        let reminderTimeMinute: Int? = (record["reminderTimeMinute"] as? Int64).map { Int($0) }
+        let reminderChildType = record["reminderChildType"] as? String
+        let isDateNode = (record["isDateNode"] as? Int64 ?? 0) != 0
+        let dateNodeDate = record["dateNodeDate"] as? Date
+
         // Encode system fields for future partial updates
         let coder = NSKeyedArchiver(requiringSecureCoding: true)
         record.encodeSystemFields(with: coder)
@@ -117,7 +156,14 @@ struct NodeRecordMapper {
             parentId: parentId,
             sortIndex: sortIndex,
             modifiedLocally: modifiedLocally,
-            systemFieldsData: systemFieldsData
+            systemFieldsData: systemFieldsData,
+            reminderIdentifier: reminderIdentifier,
+            reminderListName: reminderListName,
+            reminderTimeHour: reminderTimeHour,
+            reminderTimeMinute: reminderTimeMinute,
+            reminderChildType: reminderChildType,
+            isDateNode: isDateNode,
+            dateNodeDate: dateNodeDate
         )
     }
 

@@ -12,6 +12,8 @@ struct BulletView: View {
     let node: OutlineNode
     let isFocused: Bool
     var isCollapsed: Bool  // Per-tab collapse state (passed from parent)
+
+    var isOverdue: Bool = false  // Overdue reminder (shows red dot)
     var scale: CGFloat = 1.0  // Scale factor for sizing
     var onTap: () -> Void = {}
     var onDoubleTap: () -> Void = {}  // iOS: double-tap to zoom into node
@@ -49,6 +51,14 @@ struct BulletView: View {
                         .frame(width: bulletSize, height: bulletSize)
                 }
             }
+
+                // Overdue red dot indicator
+                if isOverdue {
+                    Circle()
+                        .fill(.red)
+                        .frame(width: 6 * scale, height: 6 * scale)
+                        .offset(x: 6 * scale, y: -6 * scale)
+                }
         }
         .buttonStyle(.plain)
         .frame(width: size, height: size)

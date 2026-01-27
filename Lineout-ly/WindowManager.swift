@@ -11,7 +11,7 @@ import SwiftUI
 import AppKit
 #endif
 
-/// Manages shared document state and node locking across windows
+/// Manages shared document state across windows
 @Observable
 @MainActor
 final class WindowManager {
@@ -23,9 +23,6 @@ final class WindowManager {
     /// Loading state
     var isLoading = true
     var loadError: Error?
-
-    /// Map of nodeId -> windowId for locked nodes
-    private var nodeLocks: [UUID: UUID] = [:]
 
     /// Pending zoom for next window (set before opening new tab via Cmd+T)
     var pendingZoom: UUID?
@@ -250,34 +247,6 @@ final class WindowManager {
         document = nil
         documentLoaded = false
         await loadDocumentIfNeeded()
-    }
-
-    // MARK: - Node Locking
-
-    /// Check if a node is locked by a different window
-    func isNodeLocked(_ nodeId: UUID, for windowId: UUID) -> Bool {
-        guard let lockingWindowId = nodeLocks[nodeId] else { return false }
-        return lockingWindowId != windowId
-    }
-
-    /// Try to acquire a lock on a node for a window
-    func tryLock(nodeId: UUID, for windowId: UUID) -> Bool {
-        if let existingLock = nodeLocks[nodeId] {
-            return existingLock == windowId
-        }
-        nodeLocks[nodeId] = windowId
-        return true
-    }
-
-    /// Release a lock on a node
-    func releaseLock(nodeId: UUID, for windowId: UUID) {
-        guard nodeLocks[nodeId] == windowId else { return }
-        nodeLocks.removeValue(forKey: nodeId)
-    }
-
-    /// Release all locks held by a window
-    func releaseAllLocks(for windowId: UUID) {
-        nodeLocks = nodeLocks.filter { $0.value != windowId }
     }
 
     // MARK: - New Tab

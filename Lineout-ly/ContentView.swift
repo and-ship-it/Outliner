@@ -108,7 +108,10 @@ struct ContentView: View {
                 }
                 WindowManager.shared.pendingZoom = nil
             }
-            // Default: Start at home (root level), no auto-zoom
+            // Default: Start at home (root level) — reset any persisted zoom
+            if WindowManager.shared.pendingZoom == nil {
+                zoomedNodeIdString = ""
+            }
 
             // Initialize collapse state: collapse ALL nodes with children for faster loading
             if !collapseStateInitialized {
@@ -131,6 +134,16 @@ struct ContentView: View {
             WindowManager.shared.registerTabFontSize(windowId: windowId, fontSize: fontSize)
             WindowManager.shared.registerTabAlwaysOnTop(windowId: windowId, isAlwaysOnTop: isAlwaysOnTop)
 
+            // Ensure date structure exists for current week
+            if let doc = WindowManager.shared.document {
+                DateStructureManager.shared.ensureDateNodes(in: doc)
+                // Force date nodes to be expanded (they should always be visible)
+                let weekDates = DateStructureManager.shared.currentWeekDates()
+                for date in weekDates {
+                    collapsedNodeIds.remove(DateStructureManager.deterministicUUID(for: date))
+                }
+            }
+
             // Set up CloudKit per-node sync engine (iOS 17+/macOS 14+)
             if #available(macOS 14.0, iOS 17.0, *) {
                 CloudKitSyncEngine.shared.setup()
@@ -140,10 +153,15 @@ struct ContentView: View {
                     await MigrationManager.migrateIfNeeded(document: doc)
                 }
             }
+
+            // Set up Apple Reminders bidirectional sync
+            let remindersGranted = await ReminderSyncEngine.shared.requestAccess()
+            if remindersGranted {
+                ReminderSyncEngine.shared.startObserving()
+                await ReminderSyncEngine.shared.syncExternalChanges()
+            }
         }
         .onDisappear {
-            // Release all locks when window closes
-            WindowManager.shared.releaseAllLocks(for: windowId)
             // Unregister the tab to clean up state
             WindowManager.shared.unregisterTab(windowId: windowId)
         }
@@ -202,7 +220,12 @@ struct ContentView: View {
 
         case .active:
             // CKSyncEngine handles push-based sync automatically
-            break
+            // Re-sync Reminders in case user made changes while backgrounded
+            if ReminderSyncEngine.shared.isAuthorized {
+                Task {
+                    await ReminderSyncEngine.shared.syncExternalChanges()
+                }
+            }
 
         case .inactive:
             break

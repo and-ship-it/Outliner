@@ -29,11 +29,57 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
     /// Encoded CKRecord system fields for partial CloudKit updates
     var cloudKitSystemFields: Data?
 
+    // MARK: - Reminder Sync Properties
+
+    /// The EKReminder calendarItemIdentifier for bidirectional sync.
+    /// Non-nil means this node is synced with Apple Reminders.
+    var reminderIdentifier: String?
+
+    /// The Apple Reminders list name (e.g., "Personal", "Work").
+    /// Displayed as grey suffix text in the UI.
+    var reminderListName: String?
+
+    // MARK: - Reminder Time Properties
+
+    /// Hour component of the reminder's due time (0-23), nil if no time set.
+    var reminderTimeHour: Int?
+
+    /// Minute component of the reminder's due time (0-59), nil if no time set.
+    var reminderTimeMinute: Int?
+
+    // MARK: - Reminder Metadata Child Type
+
+    /// Marks this node as an auto-generated metadata child of a reminder.
+    /// Values: "note" (synced with reminder.notes) or "link" (synced with reminder.url).
+    var reminderChildType: String?
+
+    // MARK: - Date Node Properties
+
+    /// Whether this node is a pinned date node in the weekly structure.
+    /// Date nodes can't be deleted, reordered, or have their title edited.
+    var isDateNode: Bool
+
+    /// The calendar date this date node represents (nil for non-date nodes).
+    /// Used to infer due dates for child reminder tasks.
+    var dateNodeDate: Date?
+
     // MARK: - Computed Properties
 
     var hasChildren: Bool { !children.isEmpty }
     var hasBody: Bool { !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var isRoot: Bool { parent == nil }
+
+    /// Formatted reminder time string (e.g., "9:00 AM"), nil if no time set.
+    var formattedReminderTime: String? {
+        guard let hour = reminderTimeHour, let minute = reminderTimeMinute else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        var components = DateComponents()
+        components.hour = hour
+        components.minute = minute
+        guard let date = Calendar.current.date(from: components) else { return nil }
+        return formatter.string(from: date)
+    }
 
     var depth: Int {
         var count = 0
@@ -81,7 +127,14 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         children: [OutlineNode] = [],
         sortIndex: Int64 = 0,
         lastModifiedLocally: Date = Date(),
-        cloudKitSystemFields: Data? = nil
+        cloudKitSystemFields: Data? = nil,
+        reminderIdentifier: String? = nil,
+        reminderListName: String? = nil,
+        reminderTimeHour: Int? = nil,
+        reminderTimeMinute: Int? = nil,
+        reminderChildType: String? = nil,
+        isDateNode: Bool = false,
+        dateNodeDate: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -93,6 +146,13 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         self.sortIndex = sortIndex
         self.lastModifiedLocally = lastModifiedLocally
         self.cloudKitSystemFields = cloudKitSystemFields
+        self.reminderIdentifier = reminderIdentifier
+        self.reminderListName = reminderListName
+        self.reminderTimeHour = reminderTimeHour
+        self.reminderTimeMinute = reminderTimeMinute
+        self.reminderChildType = reminderChildType
+        self.isDateNode = isDateNode
+        self.dateNodeDate = dateNodeDate
 
         // Set parent references for children
         for child in children {
@@ -262,7 +322,14 @@ extension OutlineNode {
             children: self.children.map { $0.deepCopy() },
             sortIndex: self.sortIndex,
             lastModifiedLocally: self.lastModifiedLocally,
-            cloudKitSystemFields: self.cloudKitSystemFields
+            cloudKitSystemFields: self.cloudKitSystemFields,
+            reminderIdentifier: self.reminderIdentifier,
+            reminderListName: self.reminderListName,
+            reminderTimeHour: self.reminderTimeHour,
+            reminderTimeMinute: self.reminderTimeMinute,
+            reminderChildType: self.reminderChildType,
+            isDateNode: self.isDateNode,
+            dateNodeDate: self.dateNodeDate
         )
         return copy
     }

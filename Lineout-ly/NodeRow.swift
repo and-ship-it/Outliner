@@ -43,15 +43,12 @@ struct NodeRow: View {
     @State private var isTextExpanded: Bool = false
     private let maxLinesWhenCollapsed: Int = 3
 
-    // Custom context menu state (liquid glass style)
-    @State private var showContextMenu: Bool = false
     #endif
 
     // Base sizes (at default font size 13.0)
     private let baseFontSize: CGFloat = 13.0
     private let baseIndentWidth: CGFloat = 20
     private let baseBulletViewSize: CGFloat = 22  // BulletView width/height
-    private let baseLockIconSize: CGFloat = 8
     private let baseCheckboxSize: CGFloat = 14
     private let baseContentLeading: CGFloat = 6
 
@@ -87,7 +84,6 @@ struct NodeRow: View {
     private var indentWidth: CGFloat { baseIndentWidth * scale }
     private var bulletViewSize: CGFloat { baseBulletViewSize * scale }
     private var treeLineLeading: CGFloat { (baseBulletViewSize / 2) * scale }  // Center of bullet = 11 * scale
-    private var lockIconSize: CGFloat { baseLockIconSize * scale }
     private var checkboxSize: CGFloat { baseCheckboxSize * scale }
     /// Content leading padding - reduced when there's a checkbox to keep text alignment consistent
     private var contentLeading: CGFloat {
@@ -120,14 +116,16 @@ struct NodeRow: View {
         document.isNodeSelected(node.id)
     }
 
-    /// Check if this node is locked by another window
-    var isLockedByOtherWindow: Bool {
-        WindowManager.shared.isNodeLocked(node.id, for: windowId)
-    }
-
     /// Check if this node is collapsed in the current tab
     var isCollapsedInTab: Bool {
         collapsedNodeIds.contains(node.id)
+    }
+
+    /// Check if this synced reminder is overdue (past due date and not completed)
+    var isOverdue: Bool {
+        guard node.isTask, !node.isTaskCompleted, node.reminderIdentifier != nil else { return false }
+        guard let dueDate = DateStructureManager.shared.inferredDueDate(for: node) else { return false }
+        return Calendar.current.startOfDay(for: Date()) > Calendar.current.startOfDay(for: dueDate)
     }
 
     #if os(iOS)
@@ -158,6 +156,14 @@ struct NodeRow: View {
                 // Clear multi-selection when clicking
                 document.clearSelection()
                 tryFocusNode()
+            }
+            // Context menu (right-click)
+            .contextMenu {
+                if node.reminderIdentifier != nil {
+                    Button("Open in Reminders") {
+                        ReminderSyncEngine.shared.openInReminders(node)
+                    }
+                }
             }
             // Dim non-focused nodes in focus mode
             .opacity(isFocusMode && !isNodeFocused ? 0.3 : 1.0)
@@ -272,43 +278,8 @@ struct NodeRow: View {
                 tryFocusNode()
             }
         }
-        // Long press to show custom liquid glass context menu
-        .onLongPressGesture(minimumDuration: 0.5) {
-            let generator = UIImpactFeedbackGenerator(style: .medium)
-            generator.impactOccurred()
-            showContextMenu = true
-        }
-        // Custom liquid glass styled context menu sheet
-        .sheet(isPresented: $showContextMenu) {
-            LiquidGlassContextMenu(
-                onZoomIn: {
-                    showContextMenu = false
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
-                    performZoomIn(to: node)
-                },
-                onSelect: {
-                    showContextMenu = false
-                    let generator = UIImpactFeedbackGenerator(style: .light)
-                    generator.impactOccurred()
-                    if !isEditMode {
-                        isEditMode = true
-                    }
-                    document.selectedNodeIds.insert(node.id)
-                },
-                onDelete: {
-                    showContextMenu = false
-                    let generator = UINotificationFeedbackGenerator()
-                    generator.notificationOccurred(.warning)
-                    document.focusedNodeId = node.id
-                    document.deleteFocusedWithChildren()
-                }
-            )
-            .presentationDetents([.height(200)])
-            .presentationDragIndicator(.visible)
-            .presentationCornerRadius(20)
-            .presentationBackground(.ultraThinMaterial)
-        }
+        // Native context menu on long-press (iOS Reminders style)
+        .contextMenu { iOSContextMenuContent }
         // Dim non-focused nodes in focus mode
         .opacity(isFocusMode && !isNodeFocused ? 0.3 : 1.0)
         // Swipe gesture for indent/outdent (only when not in edit mode)
@@ -414,6 +385,121 @@ struct NodeRow: View {
         }
     }
 
+    /// Context menu items for long-press on iOS (extracted to reduce type-checker complexity)
+    @ViewBuilder
+    private var iOSContextMenuContent: some View {
+        // Reorder
+        Section {
+            Button {
+                document.focusedNodeId = node.id
+                document.moveUp()
+            } label: {
+                Label("Move Up", systemImage: "arrow.up")
+            }
+            Button {
+                document.focusedNodeId = node.id
+                document.moveDown()
+            } label: {
+                Label("Move Down", systemImage: "arrow.down")
+            }
+        }
+
+        // Hierarchy
+        Section {
+            Button {
+                document.focusedNodeId = node.id
+                document.indent()
+            } label: {
+                Label("Indent", systemImage: "increase.indent")
+            }
+            Button {
+                document.focusedNodeId = node.id
+                document.outdent()
+            } label: {
+                Label("Outdent", systemImage: "decrease.indent")
+            }
+        }
+
+        // Collapse / Expand (only for parent nodes)
+        if node.hasChildren {
+            Section {
+                if collapsedNodeIds.contains(node.id) {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            _ = collapsedNodeIds.remove(node.id)
+                        }
+                    } label: {
+                        Label("Expand", systemImage: "chevron.down")
+                    }
+                } else {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            _ = collapsedNodeIds.insert(node.id)
+                        }
+                    } label: {
+                        Label("Collapse", systemImage: "chevron.right")
+                    }
+                }
+            }
+        }
+
+        // Zoom
+        Section {
+            Button {
+                performZoomIn(to: node)
+            } label: {
+                Label("Zoom In", systemImage: "plus.magnifyingglass")
+            }
+            if zoomedNodeId != nil {
+                Button {
+                    if let zoomedId = zoomedNodeId,
+                       let zoomed = document.root.find(id: zoomedId) {
+                        if let parent = zoomed.parent, !parent.isRoot {
+                            zoomedNodeId = parent.id
+                        } else {
+                            zoomedNodeId = nil
+                        }
+                    }
+                } label: {
+                    Label("Zoom Out", systemImage: "minus.magnifyingglass")
+                }
+            }
+        }
+
+        // Select
+        Section {
+            Button {
+                if !isEditMode {
+                    isEditMode = true
+                }
+                document.selectedNodeIds.insert(node.id)
+            } label: {
+                Label("Select", systemImage: "checkmark.circle")
+            }
+        }
+
+        // Open in Reminders (conditional)
+        if node.reminderIdentifier != nil {
+            Section {
+                Button {
+                    ReminderSyncEngine.shared.openInReminders(node)
+                } label: {
+                    Label("Open in Reminders", systemImage: "list.bullet")
+                }
+            }
+        }
+
+        // Delete (destructive)
+        Section {
+            Button(role: .destructive) {
+                document.focusedNodeId = node.id
+                document.deleteFocusedWithChildren()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+
     /// Toggle selection of this node with haptic feedback
     private func toggleSelection() {
         let generator = UIImpactFeedbackGenerator(style: .light)
@@ -464,47 +550,43 @@ struct NodeRow: View {
                     .frame(width: CGFloat(effectiveDepth) * indentWidth)
             }
 
-            // Bullet with lock indicator
-            ZStack(alignment: .topTrailing) {
-                BulletView(
-                    node: node,
-                    isFocused: isNodeFocused,
-                    isCollapsed: isCollapsedInTab,
-                    scale: scale,
-                    onTap: {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            // Toggle per-tab collapse state
-                            if collapsedNodeIds.contains(node.id) {
-                                collapsedNodeIds.remove(node.id)
-                            } else {
-                                collapsedNodeIds.insert(node.id)
-                            }
+            BulletView(
+                node: node,
+                isFocused: isNodeFocused,
+                isCollapsed: isCollapsedInTab,
+                isOverdue: isOverdue,
+                scale: scale,
+                onTap: {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        // Toggle per-tab collapse state
+                        if collapsedNodeIds.contains(node.id) {
+                            collapsedNodeIds.remove(node.id)
+                        } else {
+                            collapsedNodeIds.insert(node.id)
                         }
-                    },
-                    onDoubleTap: {
-                        #if os(iOS)
-                        // Double-tap on bullet zooms into this node
-                        let generator = UIImpactFeedbackGenerator(style: .medium)
-                        generator.impactOccurred()
-                        performZoomIn(to: node)
-                        #endif
                     }
-                )
-
-                // Lock indicator when locked by another window
-                if isLockedByOtherWindow {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: lockIconSize))
-                        .foregroundStyle(.gray)
-                        .offset(x: 4 * scale, y: -2 * scale)
+                },
+                onDoubleTap: {
+                    #if os(iOS)
+                    // Double-tap on bullet zooms into this node
+                    let generator = UIImpactFeedbackGenerator(style: .medium)
+                    generator.impactOccurred()
+                    performZoomIn(to: node)
+                    #endif
                 }
-            }
+            )
             .offset(y: bulletVerticalOffset)  // Center with first line of text
 
             // Task checkbox (shown when node is a task)
             if node.isTask {
                 Button(action: {
                     node.toggleTaskCompleted()
+                    // Sync completion status to Apple Reminders
+                    if node.reminderIdentifier != nil,
+                       !ReminderSyncEngine.shared.isApplyingReminderChanges {
+                        let dueDate = DateStructureManager.shared.inferredDueDate(for: node)
+                        ReminderSyncEngine.shared.syncNodeToReminder(node, dueDate: dueDate)
+                    }
                 }) {
                     Image(systemName: node.isTaskCompleted ? "checkmark.square.fill" : "square")
                         .font(.system(size: checkboxSize))
@@ -525,7 +607,6 @@ struct NodeRow: View {
                 }
             }
             .padding(.leading, contentLeading)
-            .opacity(isLockedByOtherWindow ? 0.5 : 1.0) // Dim locked nodes
 
             Spacer(minLength: minTrailing)
         }
@@ -579,30 +660,11 @@ struct NodeRow: View {
     }
     #endif
 
-    /// Try to focus this node, acquiring lock if needed
+    /// Focus this node
     private func tryFocusNode() {
         print("[DEBUG] tryFocusNode: CALLED for node '\(node.title.prefix(20))' (id: \(node.id))")
-        // If locked by another window, don't allow focus
-        if isLockedByOtherWindow {
-            print("[DEBUG] tryFocusNode: BLOCKED - locked by other window")
-            return
-        }
-
-        let oldFocusId = document.focusedNodeId
-        print("[DEBUG] tryFocusNode: oldFocusId=\(oldFocusId?.uuidString.prefix(8) ?? "nil")")
-
-        // Try to acquire lock
-        if WindowManager.shared.tryLock(nodeId: node.id, for: windowId) {
-            print("[DEBUG] tryFocusNode: lock acquired, calling document.setFocus")
-            // Release old lock
-            if let oldId = oldFocusId, oldId != node.id {
-                WindowManager.shared.releaseLock(nodeId: oldId, for: windowId)
-            }
-            document.setFocus(node)
-            print("[DEBUG] tryFocusNode: document.focusedNodeId is now \(document.focusedNodeId?.uuidString.prefix(8) ?? "nil")")
-        } else {
-            print("[DEBUG] tryFocusNode: FAILED to acquire lock")
-        }
+        document.setFocus(node)
+        print("[DEBUG] tryFocusNode: document.focusedNodeId is now \(document.focusedNodeId?.uuidString.prefix(8) ?? "nil")")
     }
 
     // MARK: - Zoom Operations
@@ -666,17 +728,22 @@ struct NodeRow: View {
         #if os(macOS)
         OutlineTextField(
             text: Binding(
-                get: { node.title },
+                get: {
+                    let prefix = reminderChildPrefix(for: node)
+                    return prefix + node.title
+                },
                 set: { newValue in
-                    // Only allow editing if not locked
-                    if !isLockedByOtherWindow {
-                        node.title = newValue
-                        document.contentDidChange(nodeId: node.id)  // Trigger auto-save
+                    let prefix = reminderChildPrefix(for: node)
+                    node.title = prefix.isEmpty ? newValue : String(newValue.dropFirst(prefix.count))
+                    document.contentDidChange(nodeId: node.id)  // Trigger auto-save
+                    // Debounced title sync to Apple Reminders
+                    if !ReminderSyncEngine.shared.isApplyingReminderChanges {
+                        ReminderSyncEngine.shared.scheduleTitleSync(for: node)
                     }
                 }
             ),
-            isFocused: isNodeFocused && !isLockedByOtherWindow,
-            isLocked: isLockedByOtherWindow,
+            isFocused: isNodeFocused,
+            protectedPrefixLength: protectedPrefixLength(for: node),
             isTaskCompleted: node.isTask && node.isTaskCompleted,
             hasNextNode: hasNextNode,
             placeholder: isOnlyNode && node.title.isEmpty ? placeholderText : nil,
@@ -700,8 +767,10 @@ struct NodeRow: View {
             },
             onAction: handleAction,
             onSplitLine: { [self] textAfter in
-                // If focused node is the zoomed node, create a child instead (sibling would be outside zoom)
-                if node.id == zoomedNodeId {
+                // Parent nodes or zoomed node: split text becomes a child
+                // Leaf nodes: split text becomes a sibling
+                if node.id == zoomedNodeId || node.hasChildren {
+                    collapsedNodeIds.remove(node.id)
                     if let newNode = document.createChild() {
                         newNode.title = textAfter
                     }
@@ -710,7 +779,7 @@ struct NodeRow: View {
                 }
             },
             font: .systemFont(ofSize: CGFloat(fontSize)),
-            fontWeight: effectiveDepth == 0 ? .medium : .regular
+            fontWeight: (effectiveDepth == 0 || node.isDateNode) ? .medium : .regular
         )
         #else
         // iOS: Show truncated text when not focused and text is long
@@ -720,7 +789,7 @@ struct NodeRow: View {
             // Truncated view - tap to expand or focus
             VStack(alignment: .leading, spacing: 2) {
                 Text(node.title)
-                    .font(.system(size: fontSize, weight: effectiveDepth == 0 ? .semibold : .regular))
+                    .font(.system(size: fontSize, weight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : .regular))
                     .foregroundColor(node.isTask && node.isTaskCompleted ? .secondary : .primary)
                     .strikethrough(node.isTask && node.isTaskCompleted)
                     .lineLimit(maxLinesWhenCollapsed)
@@ -743,15 +812,22 @@ struct NodeRow: View {
             // Full text field for editing
             OutlineTextField(
                 text: Binding(
-                    get: { node.title },
+                    get: {
+                        let prefix = reminderChildPrefix(for: node)
+                        return prefix + node.title
+                    },
                     set: { newValue in
-                        if !isLockedByOtherWindow {
-                            node.title = newValue
-                            document.contentDidChange(nodeId: node.id)  // Trigger auto-save
+                        let prefix = reminderChildPrefix(for: node)
+                        node.title = prefix.isEmpty ? newValue : String(newValue.dropFirst(prefix.count))
+                        document.contentDidChange(nodeId: node.id)  // Trigger auto-save
+                        // Debounced title sync to Apple Reminders
+                        if !ReminderSyncEngine.shared.isApplyingReminderChanges {
+                            ReminderSyncEngine.shared.scheduleTitleSync(for: node)
                         }
                     }
                 ),
-                isFocused: isNodeFocused && !isLockedByOtherWindow,
+                isFocused: isNodeFocused,
+                protectedPrefixLength: protectedPrefixLength(for: node),
                 nodeId: node.id,
                 nodeTitle: String(node.title.prefix(20)),
                 cursorAtEnd: document.cursorAtEndOnNextFocus && isNodeFocused,
@@ -772,8 +848,11 @@ struct NodeRow: View {
                     }
                 },
                 onCreateSibling: {
-                    // Enter key pressed - create sibling bullet (or child if at zoomed node)
-                    if node.id == zoomedNodeId {
+                    // Parent nodes: create child (nested bullet)
+                    // Leaf nodes: create sibling on same level
+                    // Zoomed node: always create child
+                    if node.id == zoomedNodeId || node.hasChildren {
+                        collapsedNodeIds.remove(node.id)
                         document.createChild()
                     } else {
                         document.createSiblingBelow()
@@ -814,10 +893,90 @@ struct NodeRow: View {
                     }
                 },
                 fontSize: CGFloat(fontSize),
-                fontWeight: effectiveDepth == 0 ? .semibold : .regular
+                fontWeight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : .regular
             )
         }
         #endif
+    }
+
+    /// Compute the protected prefix length for date nodes (e.g. "Mon Jan 27" = 10 chars)
+    private func dateNodePrefixLength(for node: OutlineNode) -> Int {
+        guard node.isDateNode, let date = node.dateNodeDate else { return 0 }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE MMM d"
+        return formatter.string(from: date).count
+    }
+
+    /// Display prefix for reminder metadata children (prepended to title, protected + faded)
+    private func reminderChildPrefix(for node: OutlineNode) -> String {
+        guard let childType = node.reminderChildType else { return "" }
+        return childType == "note" ? "reminder note: " : "link: "
+    }
+
+    /// Combined protected prefix length for date nodes or reminder child prefixes
+    private func protectedPrefixLength(for node: OutlineNode) -> Int {
+        if node.isDateNode {
+            return dateNodePrefixLength(for: node)
+        }
+        return reminderChildPrefix(for: node).count
+    }
+
+    /// Inline time picker for synced reminders (compact DatePicker or clock icon)
+    @ViewBuilder
+    private var inlineTimePicker: some View {
+        let hasTime = node.reminderTimeHour != nil && node.reminderTimeMinute != nil
+
+        if hasTime {
+            DatePicker(
+                "",
+                selection: reminderTimeBinding,
+                displayedComponents: .hourAndMinute
+            )
+            .labelsHidden()
+            .datePickerStyle(.compact)
+            .fixedSize()
+            .scaleEffect(0.85)
+        } else {
+            // "Add time" button — tapping sets a default time (9:00 AM)
+            Button {
+                node.reminderTimeHour = 9
+                node.reminderTimeMinute = 0
+                document.contentDidChange(nodeId: node.id)
+                syncTimeToReminder()
+            } label: {
+                Image(systemName: "clock")
+                    .font(.system(size: CGFloat(fontSize) * 0.75))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// Binding that bridges DatePicker <-> node's hour/minute Int properties
+    private var reminderTimeBinding: Binding<Date> {
+        Binding(
+            get: {
+                var components = DateComponents()
+                components.hour = node.reminderTimeHour ?? 9
+                components.minute = node.reminderTimeMinute ?? 0
+                return Calendar.current.date(from: components) ?? Date()
+            },
+            set: { newDate in
+                node.reminderTimeHour = Calendar.current.component(.hour, from: newDate)
+                node.reminderTimeMinute = Calendar.current.component(.minute, from: newDate)
+                document.contentDidChange(nodeId: node.id)
+                syncTimeToReminder()
+            }
+        )
+    }
+
+    /// Sync time change to Apple Reminders
+    private func syncTimeToReminder() {
+        if node.reminderIdentifier != nil,
+           !ReminderSyncEngine.shared.isApplyingReminderChanges {
+            let dueDate = DateStructureManager.shared.inferredDueDate(for: node)
+            ReminderSyncEngine.shared.syncNodeToReminder(node, dueDate: dueDate)
+        }
     }
 
     #if os(macOS)
@@ -874,8 +1033,11 @@ struct NodeRow: View {
                 document.createSiblingAbove()
             }
         case .createSiblingBelow:
-            // If focused node is the zoomed node, create a child instead (sibling would be outside zoom)
-            if node.id == zoomedNodeId {
+            // Parent nodes: create child (nested bullet)
+            // Leaf nodes: create sibling on same level
+            // Zoomed node: always create child (sibling would be outside zoom)
+            if node.id == zoomedNodeId || node.hasChildren {
+                collapsedNodeIds.remove(node.id)  // Expand if collapsed
                 document.createChild()
             } else {
                 document.createSiblingBelow()
@@ -934,6 +1096,17 @@ struct NodeRow: View {
             document.mergeWithPrevious(textToMerge: textToMerge, zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
         case .toggleTask:
             node.toggleTask()
+            // Sync task state to Apple Reminders
+            if !ReminderSyncEngine.shared.isApplyingReminderChanges {
+                if node.isTask && ReminderSyncEngine.shared.isUnderDateNode(node) {
+                    // Became a task (or completion changed) under date → create/update reminder
+                    let dueDate = DateStructureManager.shared.inferredDueDate(for: node)
+                    ReminderSyncEngine.shared.syncNodeToReminder(node, dueDate: dueDate)
+                } else if !node.isTask && node.reminderIdentifier != nil {
+                    // Reverted to normal bullet → remove reminder
+                    ReminderSyncEngine.shared.removeReminder(for: node)
+                }
+            }
         case .toggleFocusMode:
             isFocusMode.toggle()
         case .goHomeAndCollapseAll:
@@ -1001,64 +1174,7 @@ struct NodeRow: View {
     }
 }
 
-// MARK: - Liquid Glass Context Menu (iOS)
-
-#if os(iOS)
-/// Custom context menu with liquid glass (frosted) styling
-/// Replaces the standard system context menu for a more modern appearance
-struct LiquidGlassContextMenu: View {
-    let onZoomIn: () -> Void
-    let onSelect: () -> Void
-    let onDelete: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Zoom In button
-            Button(action: onZoomIn) {
-                HStack {
-                    Label("Zoom In", systemImage: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 17))
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-            }
-            .foregroundColor(.primary)
-
-            Divider()
-                .padding(.horizontal, 16)
-
-            // Select button
-            Button(action: onSelect) {
-                HStack {
-                    Label("Select", systemImage: "checkmark.circle")
-                        .font(.system(size: 17))
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-            }
-            .foregroundColor(.primary)
-
-            Divider()
-                .padding(.horizontal, 16)
-
-            // Delete button (destructive)
-            Button(action: onDelete) {
-                HStack {
-                    Label("Delete", systemImage: "trash")
-                        .font(.system(size: 17))
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
-            }
-            .foregroundColor(.red)
-        }
-        .background(.clear)
-    }
-}
-#endif
+// LiquidGlassContextMenu removed — replaced by native .contextMenu in iOSRowContent
 
 #if os(macOS)
 #Preview {

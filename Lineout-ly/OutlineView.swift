@@ -179,7 +179,7 @@ struct OutlineView: View {
             SettingsSheet(fontSize: $fontSize, isFocusMode: $isFocusMode)
         }
         .fullScreenCover(isPresented: $isCarouselVisible) {
-            CardCarouselView(
+            MasonryTabOverview(
                 isVisible: $isCarouselVisible,
                 navigationHistory: navigationHistory,
                 document: document,
@@ -189,7 +189,6 @@ struct OutlineView: View {
                     zoomedNodeId = navigationHistory.currentZoomId
                 },
                 onRemoveCard: { index in
-                    // Card was swiped away - update zoom if needed
                     zoomedNodeId = navigationHistory.currentZoomId
                 },
                 onCreateCard: {
@@ -204,7 +203,7 @@ struct OutlineView: View {
         // macOS tab switcher
         .overlay(macOSBottomNavBar)
         .sheet(isPresented: $isCarouselVisible) {
-            MacOSCardCarouselView(
+            MasonryTabOverview(
                 isVisible: $isCarouselVisible,
                 navigationHistory: navigationHistory,
                 document: document,
@@ -218,9 +217,11 @@ struct OutlineView: View {
                 },
                 onCreateCard: {
                     macOSCreateNewZoomLevel()
-                }
+                },
+                fontSize: $fontSize,
+                isFocusMode: $isFocusMode
             )
-            .frame(width: 600, height: 450)
+            .frame(width: 500, height: 600)
         }
         #endif
         .onAppear {
@@ -519,18 +520,6 @@ struct OutlineView: View {
 
                 Spacer()
 
-                // Move button
-                remindersToolbarButton(
-                    icon: "folder",
-                    label: "Move"
-                ) {
-                    isDraggingSelection = true
-                    let generator = UIImpactFeedbackGenerator(style: .medium)
-                    generator.impactOccurred()
-                }
-
-                Spacer()
-
                 // Delete button (red)
                 remindersToolbarButton(
                     icon: "trash",
@@ -725,12 +714,11 @@ struct OutlineView: View {
 
             // Only show when not in edit mode and no selection bar visible
             if !isEditMode || document.selectedNodeIds.isEmpty {
-                HStack(spacing: 10) {
-                    // Carousel button (shows card count)
+                HStack {
+                    // Tab overview button (shows card count)
                     Button {
                         let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.impactOccurred()
-                        // Dismiss keyboard first, then show carousel after keyboard animates away
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             isCarouselVisible = true
@@ -748,93 +736,22 @@ struct OutlineView: View {
                         .background(liquidGlassBackground())
                     }
 
-                    // Indent/Outdent buttons group
-                    HStack(spacing: 0) {
-                        Button {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
-                            document.outdent()
-                        } label: {
-                            Image(systemName: "decrease.indent")
-                                .font(.system(size: bottomBarIconSize, weight: .medium))
-                                .foregroundColor(.primary)
-                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
-                        }
-
-                        Button {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
-                            document.indent()
-                        } label: {
-                            Image(systemName: "increase.indent")
-                                .font(.system(size: bottomBarIconSize, weight: .medium))
-                                .foregroundColor(.primary)
-                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
-                        }
+                    // Home button — go to root and collapse all
+                    Button {
+                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                        generator.impactOccurred()
+                        goHomeAndCollapseAll()
+                    } label: {
+                        Image(systemName: "house")
+                            .font(.system(size: bottomBarIconSize, weight: .medium))
+                            .foregroundColor(.primary)
+                            .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
+                            .background(liquidGlassBackground(isCircle: true))
                     }
-                    .background(liquidGlassBackground())
-
-                    // Collapse/Expand buttons group
-                    HStack(spacing: 0) {
-                        Button {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
-                            if let focused = document.focusedNode, focused.hasChildren {
-                                collapsedNodeIds.insert(focused.id)
-                            }
-                        } label: {
-                            Image(systemName: "chevron.up")
-                                .font(.system(size: bottomBarIconSize, weight: .semibold))
-                                .foregroundColor(.primary)
-                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
-                        }
-
-                        Button {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
-                            if let focused = document.focusedNode {
-                                collapsedNodeIds.remove(focused.id)
-                            }
-                        } label: {
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: bottomBarIconSize, weight: .semibold))
-                                .foregroundColor(.primary)
-                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
-                        }
-                    }
-                    .background(liquidGlassBackground())
-
-                    // Zoom In/Out buttons group
-                    HStack(spacing: 0) {
-                        Button {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
-                            handleZoomOut()
-                        } label: {
-                            Image(systemName: "minus.magnifyingglass")
-                                .font(.system(size: bottomBarIconSize, weight: .medium))
-                                .foregroundColor(.primary)
-                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
-                        }
-
-                        Button {
-                            let generator = UIImpactFeedbackGenerator(style: .light)
-                            generator.impactOccurred()
-                            if let focused = document.focusedNode {
-                                zoomIn(to: focused)
-                            }
-                        } label: {
-                            Image(systemName: "plus.magnifyingglass")
-                                .font(.system(size: bottomBarIconSize, weight: .medium))
-                                .foregroundColor(.primary)
-                                .frame(width: bottomBarButtonSize, height: bottomBarButtonSize)
-                        }
-                    }
-                    .background(liquidGlassBackground())
 
                     Spacer()
 
-                    // New bullet button (creates new zoom level)
+                    // New bullet button
                     Button {
                         let generator = UIImpactFeedbackGenerator(style: .light)
                         generator.impactOccurred()
@@ -879,19 +796,54 @@ struct OutlineView: View {
     /// Create a new bullet and zoom into it
     /// The session name will be determined by the first 5 words of content
     private func createNewZoomLevel() {
-        // Create node with empty title - will be filled by user
-        let newNode = OutlineNode(title: "")
-
-        // Always add to root/home level (not current zoom level)
-        document.root.addChild(newNode)
-
-        // Push to navigation history and zoom into the new node
-        navigationHistory.push(newNode.id)
-        zoomedNodeId = newNode.id
-        document.structureVersion += 1
-        iCloudManager.shared.scheduleAutoSave(for: document)
+        if let todayNode = DateStructureManager.shared.todayDateNode(in: document) {
+            // Create under today's date node and zoom into it
+            let newNode = OutlineNode(title: "")
+            todayNode.addChild(newNode)
+            collapsedNodeIds.remove(todayNode.id)
+            navigationHistory.push(todayNode.id)
+            zoomedNodeId = todayNode.id
+            document.focusedNodeId = newNode.id
+            document.focusVersion += 1
+            document.structureVersion += 1
+            iCloudManager.shared.scheduleAutoSave(for: document)
+        } else {
+            // Fallback: add to root level
+            let newNode = OutlineNode(title: "")
+            document.root.addChild(newNode)
+            navigationHistory.push(newNode.id)
+            zoomedNodeId = newNode.id
+            document.structureVersion += 1
+            iCloudManager.shared.scheduleAutoSave(for: document)
+        }
     }
     #endif
+
+    // MARK: - Go Home
+
+    /// Go to root and collapse all parent nodes
+    private func goHomeAndCollapseAll() {
+        // Delete empty auto-created bullet before going home
+        if let zoomedId = zoomedNodeId {
+            document.deleteNodeIfEmpty(zoomedId)
+        }
+        withAnimation(.easeOut(duration: 0.2)) {
+            zoomedNodeId = nil
+            // Collapse all nodes with children
+            var collapsed = Set<UUID>()
+            for node in document.root.flattened() {
+                if node.hasChildren {
+                    collapsed.insert(node.id)
+                }
+            }
+            collapsedNodeIds = collapsed
+            // Focus first visible node
+            if let firstNode = document.root.children.first {
+                document.focusedNodeId = firstNode.id
+                document.focusVersion += 1
+            }
+        }
+    }
 
     // MARK: - macOS Tab Switcher
 
@@ -923,24 +875,66 @@ struct OutlineView: View {
                 .padding(.leading, 16)
                 .padding(.bottom, 12)
 
+                // Home button — go to root and collapse all
+                Button {
+                    goHomeAndCollapseAll()
+                } label: {
+                    Image(systemName: "house")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .padding(8)
+                        .background(
+                            Circle()
+                                .fill(Color.secondary.opacity(0.1))
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 12)
+
                 Spacer()
+
+                // Plus button — creates under today's date and zooms in
+                Button {
+                    macOSCreateNewZoomLevel()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .padding(8)
+                        .background(
+                            Circle()
+                                .fill(Color.secondary.opacity(0.1))
+                        )
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 16)
+                .padding(.bottom, 12)
             }
         }
     }
 
     /// Create a new bullet and zoom into it (macOS)
     private func macOSCreateNewZoomLevel() {
-        // Create node with empty title - will be filled by user
-        let newNode = OutlineNode(title: "")
-
-        // Always add to root/home level
-        document.root.addChild(newNode)
-
-        // Push to navigation history and zoom into the new node
-        navigationHistory.push(newNode.id)
-        zoomedNodeId = newNode.id
-        document.structureVersion += 1
-        iCloudManager.shared.scheduleAutoSave(for: document)
+        if let todayNode = DateStructureManager.shared.todayDateNode(in: document) {
+            // Create under today's date node and zoom into it
+            let newNode = OutlineNode(title: "")
+            todayNode.addChild(newNode)
+            collapsedNodeIds.remove(todayNode.id)
+            navigationHistory.push(todayNode.id)
+            zoomedNodeId = todayNode.id
+            document.focusedNodeId = newNode.id
+            document.focusVersion += 1
+            document.structureVersion += 1
+            iCloudManager.shared.scheduleAutoSave(for: document)
+        } else {
+            // Fallback: add to root level
+            let newNode = OutlineNode(title: "")
+            document.root.addChild(newNode)
+            navigationHistory.push(newNode.id)
+            zoomedNodeId = newNode.id
+            document.structureVersion += 1
+            iCloudManager.shared.scheduleAutoSave(for: document)
+        }
     }
     #endif
 

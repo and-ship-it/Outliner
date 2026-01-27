@@ -26,7 +26,9 @@ struct ConflictResolver {
         // Start with server record (preserves server's system fields)
         let resolved = server
 
-        let fields = ["title", "body", "isTask", "isTaskCompleted", "parentRef", "sortIndex"]
+        let fields = ["title", "body", "isTask", "isTaskCompleted", "parentRef", "sortIndex",
+                      "reminderIdentifier", "reminderListName", "reminderTimeHour", "reminderTimeMinute",
+                      "reminderChildType", "isDateNode", "dateNodeDate"]
 
         let clientModified = client["modifiedLocally"] as? Date ?? Date.distantPast
         let serverModified = server["modifiedLocally"] as? Date ?? Date.distantPast

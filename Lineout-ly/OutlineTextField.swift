@@ -95,7 +95,7 @@ class WrappingTextFieldHost: NSView {
 struct OutlineTextField: NSViewRepresentable {
     @Binding var text: String
     var isFocused: Bool
-    var isLocked: Bool = false  // Whether this node is locked by another tab
+    var protectedPrefixLength: Int = 0  // Number of characters at start that cannot be edited (e.g. date prefix)
     var isTaskCompleted: Bool = false  // Whether this is a completed task (strikethrough + grey)
     var hasNextNode: Bool = true  // Whether there's a next node to navigate to
     var placeholder: String? = nil  // Placeholder text shown when empty
@@ -193,9 +193,6 @@ struct OutlineTextField: NSViewRepresentable {
                 currentOnAction?(action)
             }
 
-            // Update locked state
-            outlineTextField.isNodeLocked = self.isLocked
-
             // Update multi-selection state
             outlineTextField.hasMultiSelection = self.hasSelection
 
@@ -206,7 +203,6 @@ struct OutlineTextField: NSViewRepresentable {
             outlineTextField.currentNodeTitle = expectedNodeTitle
 
             // Handle mouse click focus - ensure document.focusedNodeId is updated
-            // But don't allow focus on locked nodes
             let currentOnFocusChange = self.onFocusChange
             outlineTextField.onMouseDownFocus = { [weak outlineTextField] in
                 guard let tf = outlineTextField else { return }
@@ -219,20 +215,14 @@ struct OutlineTextField: NSViewRepresentable {
                     return
                 }
 
-                if tf.isNodeLocked {
-                    // Don't accept focus on locked nodes - resign immediately
-                    print("[DEBUG] onMouseDownFocus: blocked - node is locked")
-                    tf.window?.makeFirstResponder(nil)
-                    return
-                }
                 print("[DEBUG] onMouseDownFocus: calling onFocusChange(true) for node '\(expectedNodeTitle)'")
                 currentOnFocusChange(true)
             }
         }
 
-        // Update editable state based on lock
-        textField.isEditable = !isLocked
-        textField.isSelectable = !isLocked
+        // Ensure text field is always editable and selectable
+        textField.isEditable = true
+        textField.isSelectable = true
 
         // Update text color, strikethrough, search highlighting, and link styling
         if isTaskCompleted {
@@ -328,6 +318,14 @@ struct OutlineTextField: NSViewRepresentable {
             }
         }
 
+        // Fade protected prefix (date nodes, reminder note/link prefixes)
+        if protectedPrefixLength > 0 && text.count >= protectedPrefixLength {
+            let prefixRange = NSRange(location: 0, length: protectedPrefixLength)
+            let current = NSMutableAttributedString(attributedString: textField.attributedStringValue)
+            current.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: prefixRange)
+            textField.attributedStringValue = current
+        }
+
         // Handle focus changes from SwiftUI -> AppKit
         // Simple approach: ensure first responder and cursor visibility
         let fieldEditor = textField.currentEditor()
@@ -402,6 +400,21 @@ struct OutlineTextField: NSViewRepresentable {
 
         func controlTextDidChange(_ obj: Notification) {
             guard let textField = obj.object as? NSTextField else { return }
+
+            // If protected prefix, ensure it's preserved
+            if parent.protectedPrefixLength > 0 {
+                let currentText = textField.stringValue
+                let prefix = String(parent.text.prefix(parent.protectedPrefixLength))
+                if !currentText.hasPrefix(prefix) {
+                    // Restore prefix + keep anything typed after it
+                    let suffix = currentText.count > parent.protectedPrefixLength
+                        ? String(currentText.dropFirst(min(currentText.count, parent.protectedPrefixLength)))
+                        : ""
+                    textField.stringValue = prefix + suffix
+                }
+                parent.text = textField.stringValue
+                return
+            }
 
             // Get the actual text (excluding any ghost suggestion)
             if let outlineTextField = textField as? OutlineNSTextField {
@@ -652,7 +665,6 @@ struct OutlineTextField: NSViewRepresentable {
 class OutlineNSTextField: NSTextField {
     var actionHandler: ((OutlineAction) -> Void)?
     var onMouseDownFocus: (() -> Void)?  // Called when text field gains focus via mouse click
-    var isNodeLocked: Bool = false  // Whether this node is locked by another tab
     var hasMultiSelection: Bool = false  // Whether there's a multi-node selection active
 
     // Store the current node ID to handle view recycling correctly
@@ -734,21 +746,7 @@ class OutlineNSTextField: NSTextField {
         }
     }
 
-    override var acceptsFirstResponder: Bool {
-        // Don't accept focus if this node is locked by another tab
-        if isNodeLocked {
-            return false
-        }
-        return super.acceptsFirstResponder
-    }
-
     override func mouseDown(with event: NSEvent) {
-        // Don't process mouse down if locked
-        if isNodeLocked {
-            print("[DEBUG] mouseDown: blocked - node is locked")
-            return
-        }
-
         // Check if clicking on a markdown link - open URL instead of editing
         if !markdownLinks.isEmpty {
             let clickPoint = convert(event.locationInWindow, from: nil)
@@ -810,11 +808,6 @@ class OutlineNSTextField: NSTextField {
     }
 
     override func becomeFirstResponder() -> Bool {
-        // Double-check: don't become first responder if locked
-        if isNodeLocked {
-            print("[DEBUG] becomeFirstResponder: blocked - node is locked")
-            return false
-        }
         let result = super.becomeFirstResponder()
         print("[DEBUG] becomeFirstResponder: result=\(result), node='\(currentNodeTitle)'")
         // Note: Focus is now handled in mouseDown, not here
@@ -1445,6 +1438,7 @@ import UIKit
 struct OutlineTextField: UIViewRepresentable {
     @Binding var text: String
     var isFocused: Bool
+    var protectedPrefixLength: Int = 0  // Number of characters at start that cannot be edited (e.g. date prefix)
     var nodeId: UUID = UUID()
     var nodeTitle: String = ""
     var cursorAtEnd: Bool = false
@@ -1542,6 +1536,21 @@ struct OutlineTextField: UIViewRepresentable {
             textView.markdownLinks = []
         }
 
+        // Fade protected prefix (date nodes, reminder note/link prefixes)
+        if protectedPrefixLength > 0 && text.count >= protectedPrefixLength {
+            let prefixRange = NSRange(location: 0, length: protectedPrefixLength)
+            let current: NSMutableAttributedString
+            if let existing = textView.attributedText {
+                current = NSMutableAttributedString(attributedString: existing)
+            } else {
+                current = NSMutableAttributedString(string: text, attributes: [
+                    .font: UIFont.systemFont(ofSize: fontSize, weight: fontWeight)
+                ])
+            }
+            current.addAttribute(.foregroundColor, value: UIColor.tertiaryLabel, range: prefixRange)
+            textView.attributedText = current
+        }
+
         // Handle focus changes
         // Only call becomeFirstResponder for the focused field
         // DON'T call resignFirstResponder - let iOS handle it automatically
@@ -1569,6 +1578,20 @@ struct OutlineTextField: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            // If protected prefix, ensure it's preserved
+            if parent.protectedPrefixLength > 0 {
+                let currentText = textView.text ?? ""
+                let prefix = String(parent.text.prefix(parent.protectedPrefixLength))
+                if !currentText.hasPrefix(prefix) {
+                    let suffix = currentText.count > parent.protectedPrefixLength
+                        ? String(currentText.dropFirst(min(currentText.count, parent.protectedPrefixLength)))
+                        : ""
+                    textView.text = prefix + suffix
+                }
+                parent.text = textView.text ?? ""
+                textView.invalidateIntrinsicContentSize()
+                return
+            }
             parent.text = textView.text ?? ""
             // Invalidate intrinsic content size for height recalculation
             textView.invalidateIntrinsicContentSize()
@@ -1582,11 +1605,15 @@ struct OutlineTextField: UIViewRepresentable {
             parent.onFocusChange(false)
         }
 
-        // Handle return key to create sibling
+        // Handle return key to create sibling + protect date prefix
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             if text == "\n" {
                 print("[DEBUG] textView shouldChangeTextIn: newline detected, calling onCreateSibling")
                 parent.onCreateSibling?()
+                return false
+            }
+            // Block edits within the protected prefix range
+            if parent.protectedPrefixLength > 0 && range.location < parent.protectedPrefixLength {
                 return false
             }
             return true

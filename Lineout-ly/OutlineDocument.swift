@@ -856,6 +856,8 @@ final class OutlineDocument {
 
     func deleteFocused() {
         guard let focused = focusedNode else { return }
+        // Don't allow deleting date nodes
+        guard !focused.isDateNode else { return }
 
         // Check if this is the last node - if so, just clear it instead of deleting
         let visible = visibleNodes
@@ -889,6 +891,31 @@ final class OutlineDocument {
         let parentId = focused.parent?.id
         let indexInParent = focused.indexInParent ?? 0
         let previousFocusId = focusedNodeId
+
+        // Clean up linked Apple Reminders before deletion
+        cleanupReminders(for: focused)
+
+        // If deleting a metadata child (note/link), sync the cleared field to its parent's reminder
+        if let childType = focused.reminderChildType,
+           let parent = focused.parent,
+           parent.reminderIdentifier != nil,
+           !ReminderSyncEngine.shared.isApplyingReminderChanges {
+            // Remove the child first, then sync — the sync will see no note/link child and clear the field
+            focused.removeFromParent()
+            ReminderSyncEngine.shared.syncMetadataChildrenToReminder(parent)
+            // Ensure at least one node exists and handle focus/undo
+            ensureMinimumNode()
+            structureDidChange()
+            return
+        }
+
+        // If deleting a reminder parent, also clean up its metadata children
+        if focused.reminderIdentifier != nil {
+            let metaChildren = focused.children.filter { $0.reminderChildType != nil }
+            for child in metaChildren {
+                child.removeFromParent()
+            }
+        }
 
         // Move to trash before deleting
         TrashBin.shared.trash(focused)
@@ -929,11 +956,16 @@ final class OutlineDocument {
     /// The text from the current bullet is appended to the previous bullet
     func mergeWithPrevious(textToMerge: String, zoomedNodeId: UUID?, collapsedNodeIds: Set<UUID>) {
         guard let focused = focusedNode else { return }
+        // Don't merge date nodes or reminder metadata children
+        guard !focused.isDateNode else { return }
+        guard focused.reminderChildType == nil else { return }
 
         let visible = self.visibleNodes(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
         guard let index = visible.firstIndex(of: focused), index > 0 else { return }
 
         let previousNode = visible[index - 1]
+        // Don't merge into a date node
+        guard !previousNode.isDateNode else { return }
         let previousTitle = previousNode.title
 
         // Save state for undo
@@ -983,6 +1015,8 @@ final class OutlineDocument {
     /// Delete the focused node and all its children
     func deleteFocusedWithChildren() {
         guard let focused = focusedNode else { return }
+        // Don't allow deleting date nodes
+        guard !focused.isDateNode else { return }
 
         // Check if this is the last top-level node - if so, just clear it instead of deleting
         let visible = visibleNodes
@@ -1022,6 +1056,9 @@ final class OutlineDocument {
         let parentId = focused.parent?.id
         let indexInParent = focused.indexInParent ?? 0
         let previousFocusId = focusedNodeId
+
+        // Clean up linked Apple Reminders before deletion (node + all descendants)
+        cleanupReminders(for: focused)
 
         // Move to trash before deleting (includes all children)
         TrashBin.shared.trash(focused)
@@ -1201,8 +1238,9 @@ final class OutlineDocument {
             }
         }
 
-        // Move all selected to trash and delete
+        // Clean up linked Apple Reminders and delete
         for node in nodesToDelete {
+            cleanupReminders(for: node)
             TrashBin.shared.trash(node)
             // Track deletion for CloudKit sync
             if !isApplyingRemoteChanges {
@@ -1307,6 +1345,9 @@ final class OutlineDocument {
               let parent = focused.parent,
               let index = focused.indexInParent,
               index > 0 else { return }
+        // Don't allow moving date nodes or reminder metadata children
+        guard !focused.isDateNode else { return }
+        guard focused.reminderChildType == nil else { return }
 
         let swappedSibling = parent.children[index - 1]
         parent.children.remove(at: index)
@@ -1326,6 +1367,9 @@ final class OutlineDocument {
               let parent = focused.parent,
               let index = focused.indexInParent,
               index < parent.children.count - 1 else { return }
+        // Don't allow moving date nodes or reminder metadata children
+        guard !focused.isDateNode else { return }
+        guard focused.reminderChildType == nil else { return }
 
         let swappedSibling = parent.children[index + 1]
         parent.children.remove(at: index)
@@ -1367,6 +1411,9 @@ final class OutlineDocument {
         guard let focused = focusedNode,
               let parent = focused.parent,
               let previousSibling = focused.previousSibling else { return }
+        // Don't allow indenting date nodes or reminder metadata children
+        guard !focused.isDateNode else { return }
+        guard focused.reminderChildType == nil else { return }
 
         let originalParentId = parent.id
         let originalIndex = focused.indexInParent ?? 0
@@ -1382,6 +1429,7 @@ final class OutlineDocument {
         undoManager.setActionName("Indent")
 
         structureDidChange(dirtyNodeIds: [focused.id])
+        checkReminderReschedule(focused)
     }
 
     /// Indent all selected nodes
@@ -1465,6 +1513,9 @@ final class OutlineDocument {
         guard let focused = focusedNode,
               let parent = focused.parent,
               let grandparent = parent.parent else { return }
+        // Don't allow outdenting date nodes or reminder metadata children
+        guard !focused.isDateNode else { return }
+        guard focused.reminderChildType == nil else { return }
 
         // Get parent's index to insert after it
         guard let parentIndex = parent.indexInParent else { return }
@@ -1482,6 +1533,7 @@ final class OutlineDocument {
         undoManager.setActionName("Outdent")
 
         structureDidChange(dirtyNodeIds: [focused.id])
+        checkReminderReschedule(focused)
     }
 
     /// Outdent all selected nodes
@@ -1577,6 +1629,7 @@ final class OutlineDocument {
         undoManager.setActionName("Move")
 
         structureDidChange(dirtyNodeIds: [nodeId])
+        checkReminderReschedule(node)
     }
 
     /// Move multiple selected nodes to be siblings after a target node (for iOS drag-drop)
@@ -1641,6 +1694,36 @@ final class OutlineDocument {
 
         let movedIds = Set(sortedNodes.map { $0.id })
         structureDidChange(dirtyNodeIds: movedIds)
+        for movedNode in sortedNodes {
+            checkReminderReschedule(movedNode)
+        }
+    }
+
+    // MARK: - Reminder Cleanup on Delete
+
+    /// Remove Apple Reminders linked to a node and its descendants before deletion.
+    private func cleanupReminders(for node: OutlineNode) {
+        guard !ReminderSyncEngine.shared.isApplyingReminderChanges else { return }
+        let nodesToCheck = [node] + node.flattened()
+        for n in nodesToCheck where n.reminderIdentifier != nil {
+            ReminderSyncEngine.shared.removeReminder(for: n)
+        }
+    }
+
+    // MARK: - Reminder Reschedule Hook
+
+    /// After moving a node (indent, outdent, drag-drop), check if its reminder
+    /// due date needs updating based on the new date node ancestor.
+    /// Also checks descendants in case a parent with synced children was moved.
+    private func checkReminderReschedule(_ node: OutlineNode) {
+        guard !ReminderSyncEngine.shared.isApplyingReminderChanges else { return }
+        let nodesToCheck = [node] + node.flattened()
+        for n in nodesToCheck {
+            guard n.reminderIdentifier != nil else { continue }
+            if let newDate = DateStructureManager.shared.inferredDueDate(for: n) {
+                ReminderSyncEngine.shared.updateDueDate(for: n, newDate: newDate)
+            }
+        }
     }
 
     // MARK: - Movement Undo Helpers
@@ -1734,6 +1817,13 @@ extension OutlineDocument {
             existingNode.sortIndex = change.sortIndex
             existingNode.lastModifiedLocally = change.modifiedLocally
             existingNode.cloudKitSystemFields = change.systemFieldsData
+            existingNode.reminderIdentifier = change.reminderIdentifier
+            existingNode.reminderListName = change.reminderListName
+            existingNode.reminderTimeHour = change.reminderTimeHour
+            existingNode.reminderTimeMinute = change.reminderTimeMinute
+            existingNode.reminderChildType = change.reminderChildType
+            existingNode.isDateNode = change.isDateNode
+            existingNode.dateNodeDate = change.dateNodeDate
 
             // Check if parent changed (node was moved remotely)
             let currentParentId = existingNode.parent?.id
@@ -1761,7 +1851,14 @@ extension OutlineDocument {
                 isTaskCompleted: change.isTaskCompleted,
                 sortIndex: change.sortIndex,
                 lastModifiedLocally: change.modifiedLocally,
-                cloudKitSystemFields: change.systemFieldsData
+                cloudKitSystemFields: change.systemFieldsData,
+                reminderIdentifier: change.reminderIdentifier,
+                reminderListName: change.reminderListName,
+                reminderTimeHour: change.reminderTimeHour,
+                reminderTimeMinute: change.reminderTimeMinute,
+                reminderChildType: change.reminderChildType,
+                isDateNode: change.isDateNode,
+                dateNodeDate: change.dateNodeDate
             )
 
             // Find parent
