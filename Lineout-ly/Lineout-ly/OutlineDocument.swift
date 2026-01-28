@@ -929,7 +929,7 @@ final class OutlineDocument {
         cleanupReminders(for: focused)
 
         // If deleting a metadata child (note/link), sync the cleared field to its parent's reminder
-        if let childType = focused.reminderChildType,
+        if focused.reminderChildType != nil,
            let parent = focused.parent,
            parent.reminderIdentifier != nil,
            !ReminderSyncEngine.shared.isApplyingReminderChanges {

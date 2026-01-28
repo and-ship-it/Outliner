@@ -100,6 +100,7 @@ struct OutlineTextField: NSViewRepresentable {
     var protectedPrefixLength: Int = 0  // Number of characters at start that cannot be edited (e.g. date prefix)
     var isTaskCompleted: Bool = false  // Whether this is a completed task (strikethrough + grey)
     var isUnseen: Bool = false  // Whether this node was externally created and not yet seen (blue text)
+    var isDateNode: Bool = false  // Whether this is a date node (keeps standard color for protected prefix)
     var hasNextNode: Bool = true  // Whether there's a next node to navigate to
     var placeholder: String? = nil  // Placeholder text shown when empty
     var searchQuery: String = ""  // Current search query for highlighting matches
@@ -114,7 +115,6 @@ struct OutlineTextField: NSViewRepresentable {
     var onAction: ((OutlineAction) -> Void)?
     var onSplitLine: ((String) -> Void)?  // Called when splitting line, passes text after cursor
     var isReadOnly: Bool = false  // Disable editing for old week browsing
-    var isDateNode: Bool = false  // Whether this is a date node (keeps standard color for protected prefix)
     var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
     var fontWeight: NSFont.Weight = .regular
 
@@ -1006,6 +1006,10 @@ class OutlineNSTextField: NSTextField {
                 }
                 return true
             }
+            // Clear ghost suggestion before backspace so it deletes actual text
+            if isShowingSuggestion {
+                clearSuggestion()
+            }
 
         case 37: // L
             if hasCommand && hasShift {
@@ -1240,11 +1244,7 @@ class OutlineNSTextField: NSTextField {
 
     /// Check if autocomplete is enabled (defaults to true)
     private var isAutocompleteEnabled: Bool {
-        // If key doesn't exist, default to true
-        if UserDefaults.standard.object(forKey: "autocompleteEnabled") == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: "autocompleteEnabled")
+        SettingsManager.shared.autocompleteEnabled
     }
 
     /// Update the inline suggestion based on current text
@@ -1458,6 +1458,7 @@ struct OutlineTextField: UIViewRepresentable {
     @Binding var text: String
     var isFocused: Bool
     var protectedPrefixLength: Int = 0  // Number of characters at start that cannot be edited (e.g. date prefix)
+    var isDateNode: Bool = false  // Whether this is a date node (keeps standard color for protected prefix)
     var nodeId: UUID = UUID()
     var nodeTitle: String = ""
     var cursorAtEnd: Bool = false
@@ -1473,7 +1474,6 @@ struct OutlineTextField: UIViewRepresentable {
     var onAction: ((OutlineAction) -> Void)? = nil  // General action handler for keyboard shortcuts
     var hasMultiSelection: (() -> Bool)? = nil  // Check if document has multi-selection
     var isReadOnly: Bool = false  // Disable editing for old week browsing
-    var isDateNode: Bool = false  // Whether this is a date node (keeps standard color for protected prefix)
     var isUnseen: Bool = false  // Whether this node was externally created and not yet seen (blue text)
     var fontSize: CGFloat = 17
     var fontWeight: UIFont.Weight = .regular

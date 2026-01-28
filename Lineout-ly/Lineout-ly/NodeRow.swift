@@ -795,10 +795,11 @@ struct NodeRow: View {
             },
             onAction: handleAction,
             onSplitLine: isReadOnly ? nil : { [self] textAfter in
-                // Parent nodes or zoomed node: split text becomes a child
-                // Leaf nodes: split text becomes a sibling
-                if node.id == zoomedNodeId || node.hasChildren {
-                    collapsedNodeIds.remove(node.id)
+                // Collapsed parent: split becomes sibling (user treats node as single unit)
+                // Expanded parent or zoomed node: split becomes child
+                // Leaf nodes: split becomes sibling
+                let isCollapsed = collapsedNodeIds.contains(node.id)
+                if node.id == zoomedNodeId || (node.hasChildren && !isCollapsed) {
                     if let newNode = document.createChild() {
                         newNode.title = textAfter
                     }
@@ -880,11 +881,11 @@ struct NodeRow: View {
                     }
                 },
                 onCreateSibling: isReadOnly ? nil : {
-                    // Parent nodes: create child (nested bullet)
+                    // Collapsed parent: create sibling on same level (user treats node as single unit)
+                    // Expanded parent or zoomed node: create child (nested bullet)
                     // Leaf nodes: create sibling on same level
-                    // Zoomed node: always create child
-                    if node.id == zoomedNodeId || node.hasChildren {
-                        collapsedNodeIds.remove(node.id)
+                    let isCollapsed = collapsedNodeIds.contains(node.id)
+                    if node.id == zoomedNodeId || (node.hasChildren && !isCollapsed) {
                         document.createChild()
                     } else {
                         document.createSiblingBelow()
@@ -1093,11 +1094,11 @@ struct NodeRow: View {
                 document.createSiblingAbove()
             }
         case .createSiblingBelow:
-            // Parent nodes: create child (nested bullet)
+            // Collapsed parent: create sibling on same level (user treats node as single unit)
+            // Expanded parent or zoomed node: create child (nested bullet)
             // Leaf nodes: create sibling on same level
-            // Zoomed node: always create child (sibling would be outside zoom)
-            if node.id == zoomedNodeId || node.hasChildren {
-                collapsedNodeIds.remove(node.id)  // Expand if collapsed
+            let isCollapsed = collapsedNodeIds.contains(node.id)
+            if node.id == zoomedNodeId || (node.hasChildren && !isCollapsed) {
                 document.createChild()
             } else {
                 document.createSiblingBelow()

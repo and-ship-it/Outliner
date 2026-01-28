@@ -481,6 +481,12 @@ Press 3: Select siblings    Press 4: Expand to parent
 
 ## Development Notes
 
+### Build Verification Rule
+**After every code change, build the project before reporting back to the user.** Run `xcodebuild -scheme Lineout-ly -destination 'platform=macOS' build` and verify `BUILD SUCCEEDED`. If there are build errors, fix them before presenting the result. Do not hand off broken code.
+
+### Cross-Platform Rule
+**All changes must be implemented for both macOS and iOS unless explicitly stated otherwise.** Many views have platform-specific code paths (e.g., `#if os(iOS)` / `#if os(macOS)`, separate `NSViewRepresentable` and `UIViewRepresentable` implementations). When making a change, always check and update both platform paths. If a change cannot be implemented the same way on both platforms, ask the user before proceeding.
+
 ### Adding New Keyboard Shortcuts
 1. Add action to `OutlineAction` enum in `OutlineTextField.swift`
 2. Handle key in `performKeyEquivalent(with:)` method

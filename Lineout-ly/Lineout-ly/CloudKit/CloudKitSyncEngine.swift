@@ -187,7 +187,7 @@ extension CloudKitSyncEngine: CKSyncEngineDelegate {
         guard let document else { return nil }
 
         let weekFile = await MainActor.run { iCloudManager.shared.currentWeekFileName }
-        let zoneID = NodeRecordMapper.zoneID(for: weekFile)
+        let zoneID = await MainActor.run { NodeRecordMapper.zoneID(for: weekFile) }
 
         var prebuiltRecords: [CKRecord.ID: CKRecord] = [:]
 
@@ -210,8 +210,9 @@ extension CloudKitSyncEngine: CKSyncEngineDelegate {
             }
         }
 
+        let finalRecords = prebuiltRecords
         return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: Array(pendingChanges)) { recordID in
-            prebuiltRecords[recordID]
+            finalRecords[recordID]
         }
     }
 
