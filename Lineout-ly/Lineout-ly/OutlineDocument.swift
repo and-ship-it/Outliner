@@ -39,6 +39,11 @@ final class OutlineDocument {
     /// Increments to force a focus refresh even when focusedNodeId hasn't changed
     var focusVersion: Int = 0
 
+    /// When true, programmatic focus changes should NOT trigger becomeFirstResponder on iOS.
+    /// This prevents the keyboard from appearing on app launch and when returning from tab overview.
+    /// Cleared when the user explicitly taps a text field.
+    var suppressKeyboard: Bool = false
+
     /// Current zoom root (nil = document root, showing all top-level items)
     var zoomedNodeId: UUID?
 

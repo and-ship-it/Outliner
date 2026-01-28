@@ -1475,6 +1475,7 @@ struct OutlineTextField: UIViewRepresentable {
     var hasMultiSelection: (() -> Bool)? = nil  // Check if document has multi-selection
     var isReadOnly: Bool = false  // Disable editing for old week browsing
     var isUnseen: Bool = false  // Whether this node was externally created and not yet seen (blue text)
+    var suppressKeyboard: Bool = false  // When true, don't programmatically becomeFirstResponder (launch/carousel)
     var fontSize: CGFloat = 17
     var fontWeight: UIFont.Weight = .regular
 
@@ -1597,7 +1598,8 @@ struct OutlineTextField: UIViewRepresentable {
         // Only call becomeFirstResponder for the focused field
         // DON'T call resignFirstResponder - let iOS handle it automatically
         // This keeps the keyboard visible during focus transitions between bullets
-        if isFocused && !textView.isFirstResponder {
+        // Skip if suppressKeyboard is true (launch or carousel dismiss — user must tap to activate keyboard)
+        if isFocused && !suppressKeyboard && !textView.isFirstResponder {
             DispatchQueue.main.async {
                 textView.becomeFirstResponder()
                 if let offset = cursorOffset {

@@ -270,7 +270,7 @@ final class iCloudManager {
         // File coordination + DispatchQueue + CheckedContinuation causes Swift concurrency
         // deadlocks on iOS ("unsafeForcedSync" runtime error). Since iOS is single-process,
         // file coordination isn't needed.
-        root = try await {
+        root = try {
             let markdown = try String(contentsOf: fileURL, encoding: .utf8)
             return MarkdownCodec.parse(markdown)
         }()
@@ -338,7 +338,7 @@ final class iCloudManager {
 
         let root: OutlineNode
         #if os(iOS)
-        root = try await {
+        root = try {
             let markdown = try String(contentsOf: fileURL, encoding: .utf8)
             return MarkdownCodec.parse(markdown)
         }()
@@ -557,6 +557,46 @@ final class iCloudManager {
     func saveLocal(_ document: OutlineDocument) throws {
         let markdown = MarkdownCodec.serialize(document.root)
         try markdown.write(to: localMainFileURL, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: - Factory Reset
+
+    /// Delete all local and iCloud data files.
+    func deleteAllLocalData() {
+        let fm = FileManager.default
+
+        // Delete iCloud Drive app folder (all markdown files + .trash)
+        if let folder = appFolderURL, fm.fileExists(atPath: folder.path) {
+            try? fm.removeItem(at: folder)
+            print("[Reset] Deleted iCloud folder: \(folder.path)")
+        }
+
+        // Delete local fallback folder
+        let localFolder = localFallbackURL
+        if fm.fileExists(atPath: localFolder.path) {
+            try? fm.removeItem(at: localFolder)
+            print("[Reset] Deleted local fallback: \(localFolder.path)")
+        }
+
+        // Delete local cache directory (sync state, node cache, pending changes)
+        let documentsPath = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let cacheDir = documentsPath.appendingPathComponent("Lineout-ly-cache")
+        if fm.fileExists(atPath: cacheDir.path) {
+            try? fm.removeItem(at: cacheDir)
+            print("[Reset] Deleted cache dir: \(cacheDir.path)")
+        }
+
+        // Clear iCloud key-value store (settings)
+        let store = NSUbiquitousKeyValueStore.default
+        for key in ["weekStartDay", "autocompleteEnabled", "defaultFontSize", "focusModeEnabled"] {
+            store.removeObject(forKey: key)
+        }
+        store.synchronize()
+        print("[Reset] Cleared iCloud KV store")
+
+        // Clear UserDefaults migration flag
+        UserDefaults.standard.removeObject(forKey: "cloudkit_migration_complete_v1")
+        print("[Reset] Cleared UserDefaults")
     }
 }
 

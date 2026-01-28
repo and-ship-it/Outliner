@@ -133,6 +133,10 @@ struct ContentView: View {
                 if doc.focusedNodeId == nil,
                    zoomedNodeId == nil,
                    let todayNode = DateStructureManager.shared.todayDateNode(in: doc) {
+                    #if os(iOS)
+                    // On iOS, suppress keyboard on launch — user must tap a bullet to start typing
+                    doc.suppressKeyboard = true
+                    #endif
                     doc.focusedNodeId = todayNode.id
                     doc.focusVersion += 1
                 }

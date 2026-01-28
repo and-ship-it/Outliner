@@ -871,6 +871,9 @@ struct NodeRow: View {
                 onFocusChange: { [self] focused in
                     print("[DEBUG] onFocusChange(iOS): focused=\(focused), node='\(node.title.prefix(20))' (id: \(node.id.uuidString.prefix(8)))")
                     if focused {
+                        // User tapped this text field — clear keyboard suppression so future
+                        // programmatic focus changes will also show the keyboard
+                        document.suppressKeyboard = false
                         // Always sync document.focusedNodeId when any text field gains focus
                         // This ensures mouse clicks update the focused node properly
                         print("[DEBUG] onFocusChange(iOS): calling tryFocusNode()")
@@ -932,6 +935,7 @@ struct NodeRow: View {
                 hasMultiSelection: { !document.selectedNodeIds.isEmpty },
                 isReadOnly: isReadOnly,
                 isUnseen: node.isUnseen,
+                suppressKeyboard: document.suppressKeyboard,
                 fontSize: CGFloat(fontSize),
                 fontWeight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : .regular
             )

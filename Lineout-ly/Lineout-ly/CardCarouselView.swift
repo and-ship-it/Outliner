@@ -501,7 +501,9 @@ struct MasonryTabOverview: View {
 
     private var cardColumnWidth: CGFloat {
         #if os(iOS)
-        let screenWidth = UIScreen.main.bounds.width
+        let screenWidth = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.screen.bounds.width ?? 390
         return (screenWidth - horizontalPadding * 2 - columnSpacing) / 2
         #else
         return 210

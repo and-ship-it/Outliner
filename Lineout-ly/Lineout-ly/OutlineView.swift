@@ -800,6 +800,8 @@ struct OutlineView: View {
                     Button {
                         let generator = UIImpactFeedbackGenerator(style: .medium)
                         generator.impactOccurred()
+                        // Suppress keyboard so it doesn't reappear when returning from carousel
+                        document.suppressKeyboard = true
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                             isCarouselVisible = true
@@ -1326,6 +1328,21 @@ struct SettingsSheet: View {
                 } header: {
                     Text("About")
                 }
+
+                // Danger Zone Section
+                Section {
+                    Button(role: .destructive) {
+                        showDeleteConfirm1 = true
+                    } label: {
+                        HStack {
+                            Spacer()
+                            Text("Delete All Data")
+                            Spacer()
+                        }
+                    }
+                } footer: {
+                    Text("Permanently deletes all outlines, settings, and synced data from this device and iCloud.")
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -1337,8 +1354,29 @@ struct SettingsSheet: View {
                     .fontWeight(.semibold)
                 }
             }
+            .alert("Delete All Data?", isPresented: $showDeleteConfirm1) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    showDeleteConfirm2 = true
+                }
+            } message: {
+                Text("This will permanently delete all your outlines, settings, and synced data from this device and iCloud.")
+            }
+            .alert("Are you absolutely sure?", isPresented: $showDeleteConfirm2) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete Everything", role: .destructive) {
+                    Task {
+                        await DataResetManager.deleteAllData()
+                    }
+                }
+            } message: {
+                Text("All data will be permanently erased. This action cannot be undone.")
+            }
         }
     }
+
+    @State private var showDeleteConfirm1 = false
+    @State private var showDeleteConfirm2 = false
 }
 #endif
 

@@ -23,6 +23,11 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Display", systemImage: "textformat.size")
                 }
+
+            DataSettingsView()
+                .tabItem {
+                    Label("Data", systemImage: "trash")
+                }
         }
         .frame(width: 450, height: 250)
     }
@@ -119,6 +124,52 @@ struct DisplaySettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+}
+
+// MARK: - Data Settings Tab
+
+struct DataSettingsView: View {
+    @State private var showDeleteConfirm1 = false
+    @State private var showDeleteConfirm2 = false
+
+    var body: some View {
+        Form {
+            Section {
+                Button(role: .destructive) {
+                    showDeleteConfirm1 = true
+                } label: {
+                    Text("Delete All Data")
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Reset")
+            } footer: {
+                Text("Permanently deletes all outlines, settings, and synced data from this device and iCloud.")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .alert("Delete All Data?", isPresented: $showDeleteConfirm1) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                showDeleteConfirm2 = true
+            }
+        } message: {
+            Text("This will permanently delete all your outlines, settings, and synced data from this device and iCloud.")
+        }
+        .alert("Are you absolutely sure?", isPresented: $showDeleteConfirm2) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete Everything", role: .destructive) {
+                Task {
+                    await DataResetManager.deleteAllData()
+                }
+            }
+        } message: {
+            Text("All data will be permanently erased. This action cannot be undone.")
+        }
     }
 }
 

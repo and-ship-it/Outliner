@@ -123,6 +123,26 @@ final class CloudKitSyncEngine {
             print("[CKSync] Flush failed: \(error)")
         }
     }
+
+    // MARK: - Factory Reset
+
+    /// Delete all CloudKit zones and tear down the sync engine.
+    func deleteAllZones() async {
+        // Stop the sync engine first
+        syncEngine = nil
+        isSetUp = false
+
+        do {
+            let zones = try await database.allRecordZones()
+            for zone in zones {
+                try await database.deleteRecordZone(withID: zone.zoneID)
+                print("[CKSync] Deleted zone: \(zone.zoneID.zoneName)")
+            }
+            print("[CKSync] All zones deleted")
+        } catch {
+            print("[CKSync] Failed to delete zones: \(error)")
+        }
+    }
 }
 
 // MARK: - CKSyncEngineDelegate
