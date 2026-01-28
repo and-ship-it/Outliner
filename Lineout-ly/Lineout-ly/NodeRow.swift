@@ -129,12 +129,11 @@ struct NodeRow: View {
         return Calendar.current.startOfDay(for: Date()) > Calendar.current.startOfDay(for: dueDate)
     }
 
-    /// Whether this node is a past date node or under a past date node (should be faded)
+    /// Whether this node is under a past date node (should be faded).
+    /// Date nodes themselves are never faded — only their children.
     var isPastDate: Bool {
+        guard !node.isDateNode else { return false }
         let today = Calendar.current.startOfDay(for: Date())
-        if node.isDateNode, let date = node.dateNodeDate {
-            return Calendar.current.startOfDay(for: date) < today
-        }
         if let dueDate = DateStructureManager.shared.inferredDueDate(for: node) {
             return Calendar.current.startOfDay(for: dueDate) < today
         }
@@ -771,6 +770,7 @@ struct NodeRow: View {
             protectedPrefixLength: protectedPrefixLength(for: node),
             isTaskCompleted: node.isTask && node.isTaskCompleted,
             isUnseen: node.isUnseen,
+            isDateNode: node.isDateNode,
             hasNextNode: hasNextNode,
             placeholder: isOnlyNode && node.title.isEmpty ? placeholderText : nil,
             searchQuery: searchQuery,
@@ -857,6 +857,7 @@ struct NodeRow: View {
                 ),
                 isFocused: isNodeFocused,
                 protectedPrefixLength: protectedPrefixLength(for: node),
+                isDateNode: node.isDateNode,
                 nodeId: node.id,
                 nodeTitle: String(node.title.prefix(20)),
                 cursorAtEnd: document.cursorAtEndOnNextFocus && isNodeFocused,

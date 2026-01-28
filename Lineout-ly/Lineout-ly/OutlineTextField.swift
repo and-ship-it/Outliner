@@ -114,6 +114,7 @@ struct OutlineTextField: NSViewRepresentable {
     var onAction: ((OutlineAction) -> Void)?
     var onSplitLine: ((String) -> Void)?  // Called when splitting line, passes text after cursor
     var isReadOnly: Bool = false  // Disable editing for old week browsing
+    var isDateNode: Bool = false  // Whether this is a date node (keeps standard color for protected prefix)
     var font: NSFont = .systemFont(ofSize: NSFont.systemFontSize)
     var fontWeight: NSFont.Weight = .regular
 
@@ -326,8 +327,9 @@ struct OutlineTextField: NSViewRepresentable {
             }
         }
 
-        // Fade protected prefix (date nodes, reminder note/link prefixes)
-        if protectedPrefixLength > 0 && text.count >= protectedPrefixLength {
+        // Fade protected prefix for reminder metadata children (note/link/recurrence).
+        // Date nodes keep standard label color — they're protected but not faded.
+        if protectedPrefixLength > 0 && text.count >= protectedPrefixLength && !isDateNode {
             let prefixRange = NSRange(location: 0, length: protectedPrefixLength)
             let current = NSMutableAttributedString(attributedString: textField.attributedStringValue)
             current.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: prefixRange)
@@ -1471,6 +1473,7 @@ struct OutlineTextField: UIViewRepresentable {
     var onAction: ((OutlineAction) -> Void)? = nil  // General action handler for keyboard shortcuts
     var hasMultiSelection: (() -> Bool)? = nil  // Check if document has multi-selection
     var isReadOnly: Bool = false  // Disable editing for old week browsing
+    var isDateNode: Bool = false  // Whether this is a date node (keeps standard color for protected prefix)
     var isUnseen: Bool = false  // Whether this node was externally created and not yet seen (blue text)
     var fontSize: CGFloat = 17
     var fontWeight: UIFont.Weight = .regular
@@ -1574,8 +1577,9 @@ struct OutlineTextField: UIViewRepresentable {
             textView.markdownLinks = []
         }
 
-        // Fade protected prefix (date nodes, reminder note/link prefixes)
-        if protectedPrefixLength > 0 && text.count >= protectedPrefixLength {
+        // Fade protected prefix for reminder metadata children (note/link/recurrence).
+        // Date nodes keep standard label color — they're protected but not faded.
+        if protectedPrefixLength > 0 && text.count >= protectedPrefixLength && !isDateNode {
             let prefixRange = NSRange(location: 0, length: protectedPrefixLength)
             let current: NSMutableAttributedString
             if let existing = textView.attributedText {
