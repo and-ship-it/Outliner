@@ -164,7 +164,21 @@ struct OutlineView: View {
                     #else
                     .padding(.bottom, zoomedNodeId != nil ? 16 : 48)
                     #endif
+
+                    #if os(iOS)
+                    // Tappable empty area below content — dismisses keyboard on tap
+                    Color.clear
+                        .frame(maxWidth: .infinity, minHeight: 300)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            document.focusedNodeId = nil
+                            document.suppressKeyboard = true
+                        }
+                    #endif
                 }
+                #if os(iOS)
+                .scrollDismissesKeyboard(.interactively)
+                #endif
                 .onChange(of: document.focusedNodeId) { _, newId in
                     if let id = newId {
                         withAnimation {

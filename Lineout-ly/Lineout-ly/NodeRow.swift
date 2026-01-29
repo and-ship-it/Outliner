@@ -703,6 +703,13 @@ struct NodeRow: View {
             let generator = UIImpactFeedbackGenerator(style: .medium)
             generator.impactOccurred()
 
+            // Expand collapsed parent so indented node stays visible
+            if let focused = document.focusedNode,
+               let previousSibling = focused.previousSibling,
+               collapsedNodeIds.contains(previousSibling.id) {
+                collapsedNodeIds.remove(previousSibling.id)
+            }
+
             withAnimation(.easeOut(duration: 0.15)) {
                 document.indent()
             }
@@ -1188,6 +1195,13 @@ struct NodeRow: View {
         case .moveDown:
             document.moveDown()
         case .indent:
+            // If the target parent (previous sibling) is collapsed, expand it
+            // so the indented node remains visible instead of disappearing
+            if let focused = document.focusedNode,
+               let previousSibling = focused.previousSibling,
+               collapsedNodeIds.contains(previousSibling.id) {
+                collapsedNodeIds.remove(previousSibling.id)
+            }
             document.indent()
         case .outdent:
             document.outdent(zoomBoundaryId: zoomedNodeId)
