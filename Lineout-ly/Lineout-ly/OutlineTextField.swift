@@ -898,11 +898,7 @@ class OutlineNSTextField: NSTextField {
         // Handle key equivalents (keys with modifiers)
         switch event.keyCode {
         case 126: // Up arrow
-            if hasShift && hasOption {
-                // Shift+Option+Up: move bullet up (hardcoded alternative to Ctrl+Cmd+Up)
-                actionHandler?(.moveUp)
-                return true
-            } else if hasShift && !hasCommand && !hasOption {
+            if hasShift && !hasCommand && !hasOption {
                 // Shift+Up: select row and extend up
                 print("[DEBUG] performKeyEquivalent: Shift+Up detected, calling selectRowUp")
                 actionHandler?(.selectRowUp)
@@ -911,11 +907,7 @@ class OutlineNSTextField: NSTextField {
             // Plain Cmd+Up: let system handle (move to start of text/document)
 
         case 125: // Down arrow
-            if hasShift && hasOption {
-                // Shift+Option+Down: move bullet down (hardcoded alternative to Ctrl+Cmd+Down)
-                actionHandler?(.moveDown)
-                return true
-            } else if hasShift && !hasCommand && !hasOption {
+            if hasShift && !hasCommand && !hasOption {
                 // Shift+Down: select row and extend down
                 print("[DEBUG] performKeyEquivalent: Shift+Down detected, calling selectRowDown")
                 actionHandler?(.selectRowDown)
@@ -1900,20 +1892,6 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
                 } else {
                     actionHandler?(.zoomToRoot)
                 }
-                return
-            }
-
-            // --- Move / Reorder ---
-
-            // Shift+Option+Up → Move bullet up (hardcoded alternative to Ctrl+Cmd+Up)
-            if key.keyCode == .keyboardUpArrow, hasShift, hasOption, !hasCommand {
-                actionHandler?(.moveUp)
-                return
-            }
-
-            // Shift+Option+Down → Move bullet down (hardcoded alternative to Ctrl+Cmd+Down)
-            if key.keyCode == .keyboardDownArrow, hasShift, hasOption, !hasCommand {
-                actionHandler?(.moveDown)
                 return
             }
 

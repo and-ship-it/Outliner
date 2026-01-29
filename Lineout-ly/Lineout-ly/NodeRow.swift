@@ -1266,10 +1266,11 @@ struct NodeRow: View {
             document.mergeWithPrevious(textToMerge: textToMerge, zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
         case .toggleTask:
             node.toggleTask()
-            // Sync task state to Apple Reminders
-            if !ReminderSyncEngine.shared.isApplyingReminderChanges {
+            // Sync task state to Apple Reminders (only in bidirectional mode)
+            if SettingsManager.shared.reminderBidirectionalSync,
+               !ReminderSyncEngine.shared.isApplyingReminderChanges {
                 if node.isTask && ReminderSyncEngine.shared.isUnderDateNode(node) {
-                    // Became a task (or completion changed) under date → create/update reminder
+                    // Became a task under date → create/update reminder
                     let dueDate = DateStructureManager.shared.inferredDueDate(for: node)
                     ReminderSyncEngine.shared.syncNodeToReminder(node, dueDate: dueDate)
                 } else if !node.isTask && node.reminderIdentifier != nil {
