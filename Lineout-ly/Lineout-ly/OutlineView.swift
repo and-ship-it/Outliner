@@ -1391,6 +1391,17 @@ struct SettingsSheet: View {
                     Text("Disabling removes all reminders from the outline. Bidirectional sync allows editing from the outline.")
                 }
 
+                // Shortcuts Section
+                Section {
+                    NavigationLink("Keyboard Shortcuts") {
+                        ShortcutsListView()
+                    }
+                } header: {
+                    Text("Shortcuts")
+                } footer: {
+                    Text("Customize keyboard shortcuts for external keyboard. Synced across devices.")
+                }
+
                 // About Section
                 Section {
                     HStack {

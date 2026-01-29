@@ -222,6 +222,11 @@ struct NodeRow: View {
                         ReminderSyncEngine.shared.openInReminders(node)
                     }
                 }
+                if node.isCalendarEvent {
+                    Button("Open in Calendar") {
+                        CalendarSyncEngine.shared.openInCalendar(node)
+                    }
+                }
             }
             // Dim non-focused nodes in focus mode
             .opacity(isPastDate ? 0.4 : (isFocusMode && !isNodeFocused ? 0.3 : 1.0))
@@ -543,6 +548,17 @@ struct NodeRow: View {
                     ReminderSyncEngine.shared.openInReminders(node)
                 } label: {
                     Label("Open in Reminders", systemImage: "list.bullet")
+                }
+            }
+        }
+
+        // Open in Calendar (conditional)
+        if node.isCalendarEvent {
+            Section {
+                Button {
+                    CalendarSyncEngine.shared.openInCalendar(node)
+                } label: {
+                    Label("Open in Calendar", systemImage: "calendar")
                 }
             }
         }

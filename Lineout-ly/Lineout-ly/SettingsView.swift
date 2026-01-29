@@ -29,12 +29,17 @@ struct SettingsView: View {
                     Label("Integrations", systemImage: "arrow.triangle.2.circlepath")
                 }
 
+            ShortcutsSettingsView()
+                .tabItem {
+                    Label("Shortcuts", systemImage: "keyboard")
+                }
+
             DataSettingsView()
                 .tabItem {
                     Label("Data", systemImage: "trash")
                 }
         }
-        .frame(width: 450, height: 450)
+        .frame(width: 500, height: 550)
     }
 }
 
@@ -253,14 +258,198 @@ struct IntegrationsSettingsView: View {
     }
 }
 
+// MARK: - Shortcuts Settings Tab
+
+struct ShortcutsSettingsView: View {
+    private var manager: ShortcutManager { ShortcutManager.shared }
+    @State private var conflictWarning: String?
+
+    private var categories: [(String, [ShortcutActionInfo])] {
+        let grouped = Dictionary(grouping: ShortcutManager.actionDefinitions) { $0.category }
+        return [
+            ("Navigation", grouped["Navigation"] ?? []),
+            ("Editing", grouped["Editing"] ?? []),
+            ("View", grouped["View"] ?? []),
+        ]
+    }
+
+    var body: some View {
+        Form {
+            ForEach(categories, id: \.0) { category, actions in
+                Section {
+                    ForEach(actions, id: \.name) { info in
+                        shortcutRow(info: info)
+                    }
+                } header: {
+                    Text(category)
+                }
+            }
+
+            Section {
+                Button("Reset All to Defaults") {
+                    manager.resetAllToDefaults()
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .alert("Shortcut Conflict", isPresented: Binding(
+            get: { conflictWarning != nil },
+            set: { if !$0 { conflictWarning = nil } }
+        )) {
+            Button("OK") { conflictWarning = nil }
+        } message: {
+            Text(conflictWarning ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private func shortcutRow(info: ShortcutActionInfo) -> some View {
+        let currentBinding = manager.binding(for: info.name) ?? info.defaultBinding
+        let isCustom = manager.hasCustomBinding(for: info.name)
+
+        HStack {
+            Text(info.displayName)
+                .frame(minWidth: 160, alignment: .leading)
+
+            Spacer()
+
+            ShortcutRecorderView(
+                actionName: info.name,
+                currentBinding: Binding(
+                    get: { currentBinding },
+                    set: { _ in }
+                ),
+                onBindingChanged: { newBinding in
+                    // Check for conflicts
+                    if let conflict = manager.conflictingAction(for: newBinding, excludingAction: info.name) {
+                        let conflictName = ShortcutManager.actionDefinitions.first { $0.name == conflict }?.displayName ?? conflict
+                        conflictWarning = "\(newBinding.displayString) is already used by \"\(conflictName)\". Change that shortcut first."
+                    } else {
+                        manager.setCustomBinding(newBinding, for: info.name)
+                    }
+                }
+            )
+            .frame(width: 120)
+
+            if isCustom {
+                Button {
+                    manager.resetToDefault(actionName: info.name)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Reset to default")
+            }
+        }
+    }
+}
+
 #Preview {
     SettingsView()
 }
 #endif
 
-// MARK: - Calendar Picker (Shared between iOS and macOS)
+// MARK: - Shortcuts List View (Shared between iOS and macOS)
 
 import SwiftUI
+
+/// Lists all customizable keyboard shortcuts with key recorder for each action.
+struct ShortcutsListView: View {
+    private var manager: ShortcutManager { ShortcutManager.shared }
+    @State private var conflictWarning: String?
+
+    private var categories: [(String, [ShortcutActionInfo])] {
+        let grouped = Dictionary(grouping: ShortcutManager.actionDefinitions) { $0.category }
+        return [
+            ("Navigation", grouped["Navigation"] ?? []),
+            ("Editing", grouped["Editing"] ?? []),
+            ("View", grouped["View"] ?? []),
+        ]
+    }
+
+    var body: some View {
+        List {
+            ForEach(categories, id: \.0) { category, actions in
+                Section {
+                    ForEach(actions, id: \.name) { info in
+                        shortcutRow(info: info)
+                    }
+                } header: {
+                    Text(category)
+                }
+            }
+
+            Section {
+                Button("Reset All to Defaults") {
+                    manager.resetAllToDefaults()
+                }
+            }
+        }
+        #if os(iOS)
+        .navigationTitle("Keyboard Shortcuts")
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .alert("Shortcut Conflict", isPresented: Binding(
+            get: { conflictWarning != nil },
+            set: { if !$0 { conflictWarning = nil } }
+        )) {
+            Button("OK") { conflictWarning = nil }
+        } message: {
+            Text(conflictWarning ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private func shortcutRow(info: ShortcutActionInfo) -> some View {
+        let currentBinding = manager.binding(for: info.name) ?? info.defaultBinding
+        let isCustom = manager.hasCustomBinding(for: info.name)
+
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(info.displayName)
+                if isCustom {
+                    Text("Custom")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            Spacer()
+
+            ShortcutRecorderView(
+                actionName: info.name,
+                currentBinding: Binding(
+                    get: { currentBinding },
+                    set: { _ in }
+                ),
+                onBindingChanged: { newBinding in
+                    if let conflict = manager.conflictingAction(for: newBinding, excludingAction: info.name) {
+                        let conflictName = ShortcutManager.actionDefinitions.first { $0.name == conflict }?.displayName ?? conflict
+                        conflictWarning = "\(newBinding.displayString) is already used by \"\(conflictName)\". Change that shortcut first."
+                    } else {
+                        manager.setCustomBinding(newBinding, for: info.name)
+                    }
+                }
+            )
+            .frame(width: 120, height: 32)
+
+            if isCustom {
+                Button {
+                    manager.resetToDefault(actionName: info.name)
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+// MARK: - Calendar Picker (Shared between iOS and macOS)
+
 import EventKit
 
 /// A view listing all available EKCalendars with toggles.

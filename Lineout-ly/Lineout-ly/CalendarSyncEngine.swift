@@ -7,6 +7,11 @@
 
 import EventKit
 import Foundation
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 /// One-way sync engine: Apple Calendar → Lineout-ly outline nodes.
 /// Calendar events appear as read-only bullets directly under each day's date node.
@@ -231,5 +236,30 @@ final class CalendarSyncEngine {
     /// Returns all available event calendars for the picker UI
     func availableCalendars() -> [EKCalendar] {
         eventStore.calendars(for: .event)
+    }
+
+    // MARK: - Open in Calendar App
+
+    /// Open the Calendar app showing the date of this event.
+    /// Note: Apple Calendar doesn't support deep-linking to specific events,
+    /// only to a date via the calshow: URL scheme.
+    func openInCalendar(_ node: OutlineNode) {
+        // Walk up tree to find the date node ancestor
+        var current: OutlineNode? = node
+        while let n = current {
+            if n.isDateNode, let date = n.dateNodeDate {
+                // calshow: uses Core Data timestamp (seconds since Jan 1, 2001)
+                let timestamp = date.timeIntervalSinceReferenceDate
+                guard let url = URL(string: "calshow:\(timestamp)") else { return }
+
+                #if os(macOS)
+                NSWorkspace.shared.open(url)
+                #else
+                UIApplication.shared.open(url)
+                #endif
+                return
+            }
+            current = n.parent
+        }
     }
 }

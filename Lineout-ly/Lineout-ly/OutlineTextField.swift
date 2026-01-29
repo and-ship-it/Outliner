@@ -851,6 +851,7 @@ class OutlineNSTextField: NSTextField {
         let hasCommand = flags.contains(.command)
         let hasOption = flags.contains(.option)
         let hasShift = flags.contains(.shift)
+        let hasControl = flags.contains(.control)
 
         // Clear multi-selection on any key press except:
         // - Cmd+Shift+Backspace (which deletes selected)
@@ -877,20 +878,28 @@ class OutlineNSTextField: NSTextField {
             }
         }
 
+        // --- Customizable shortcut lookup ---
+        let keyId = ShortcutManager.keyIdentifier(from: event.keyCode)
+        if let actionName = ShortcutManager.shared.action(for: keyId, command: hasCommand, shift: hasShift, option: hasOption, control: hasControl) {
+            // Special handling for certain contextual actions
+            if actionName == "zoomToRoot" {
+                // Escape has contextual behavior: clear suggestion first, then clear selection, then zoom
+                // Don't handle via shortcut manager — fall through to hardcoded Escape handler
+            } else if actionName == "deleteWithChildren" {
+                // Has selection-dependent behavior — fall through to hardcoded handler
+            } else if actionName == "indent" || actionName == "outdent" {
+                // Tab/Shift+Tab needs autocomplete clearing — fall through to hardcoded handler
+            } else if let outlineAction = ShortcutManager.outlineAction(for: actionName) {
+                actionHandler?(outlineAction)
+                return true
+            }
+        }
+
         // Handle key equivalents (keys with modifiers)
         switch event.keyCode {
         case 126: // Up arrow
-            if hasCommand && hasShift && hasOption {
-                // Cmd+Shift+Option+Up: collapse all children
-                actionHandler?(.collapseAll)
-                return true
-            } else if hasCommand && hasShift {
-                // Cmd+Shift+Up: collapse
-                print("[DEBUG] performKeyEquivalent: Cmd+Shift+Up detected, calling collapse")
-                actionHandler?(.collapse)
-                return true
-            } else if hasShift && hasOption {
-                // Shift+Option+Up: move bullet up
+            if hasShift && hasOption {
+                // Shift+Option+Up: move bullet up (hardcoded alternative to Ctrl+Cmd+Up)
                 actionHandler?(.moveUp)
                 return true
             } else if hasShift && !hasCommand && !hasOption {
@@ -902,16 +911,8 @@ class OutlineNSTextField: NSTextField {
             // Plain Cmd+Up: let system handle (move to start of text/document)
 
         case 125: // Down arrow
-            if hasCommand && hasShift && hasOption {
-                // Cmd+Shift+Option+Down: expand all children
-                actionHandler?(.expandAll)
-                return true
-            } else if hasCommand && hasShift {
-                // Cmd+Shift+Down: expand
-                actionHandler?(.expand)
-                return true
-            } else if hasShift && hasOption {
-                // Shift+Option+Down: move bullet down
+            if hasShift && hasOption {
+                // Shift+Option+Down: move bullet down (hardcoded alternative to Ctrl+Cmd+Down)
                 actionHandler?(.moveDown)
                 return true
             } else if hasShift && !hasCommand && !hasOption {
@@ -983,17 +984,6 @@ class OutlineNSTextField: NSTextField {
             actionHandler?(.zoomToRoot)
             return true
 
-        case 47: // Period (.)
-            if hasCommand && hasShift && !hasOption {
-                actionHandler?(.zoomIn)
-                return true
-            }
-
-        case 43: // Comma (,)
-            if hasCommand && hasShift && !hasOption {
-                actionHandler?(.zoomOut)
-                return true
-            }
 
         case 51: // Delete/Backspace
             if hasCommand && hasShift {
@@ -1011,30 +1001,6 @@ class OutlineNSTextField: NSTextField {
                 clearSuggestion()
             }
 
-        case 37: // L
-            if hasCommand && hasShift {
-                // Cmd+Shift+L: toggle task mode
-                actionHandler?(.toggleTask)
-                return true
-            }
-
-        case 3: // F
-            if hasCommand && hasShift {
-                // Cmd+Shift+F: toggle focus mode
-                actionHandler?(.toggleFocusMode)
-                return true
-            } else if hasCommand && !hasShift && !hasOption {
-                // Cmd+F: toggle search
-                actionHandler?(.toggleSearch)
-                return true
-            }
-
-        case 4: // H
-            if hasCommand && hasShift {
-                // Cmd+Shift+H: go home and collapse all
-                actionHandler?(.goHomeAndCollapseAll)
-                return true
-            }
 
         case 0: // A
             if hasCommand && !hasShift && !hasOption {
@@ -1885,6 +1851,7 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
             let hasCommand = key.modifierFlags.contains(.command)
             let hasShift = key.modifierFlags.contains(.shift)
             let hasOption = key.modifierFlags.contains(.alternate)
+            let hasControl = key.modifierFlags.contains(.control)
 
             // --- Selection clearing (matches macOS behavior) ---
             // Most key combos clear multi-selection, except selection-specific shortcuts
@@ -1910,18 +1877,19 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
                 }
             }
 
-            // --- Zoom ---
-
-            // Cmd+Shift+. → Zoom In
-            if key.keyCode == .keyboardPeriod, hasCommand, hasShift, !hasOption {
-                actionHandler?(.zoomIn)
-                return
-            }
-
-            // Cmd+Shift+, → Zoom Out
-            if key.keyCode == .keyboardComma, hasCommand, hasShift, !hasOption {
-                actionHandler?(.zoomOut)
-                return
+            // --- Customizable shortcut lookup ---
+            let keyId = ShortcutManager.keyIdentifier(from: key.keyCode)
+            if let actionName = ShortcutManager.shared.action(for: keyId, command: hasCommand, shift: hasShift, option: hasOption, control: hasControl) {
+                if actionName == "zoomToRoot" {
+                    // Escape has contextual behavior — fall through
+                } else if actionName == "deleteWithChildren" {
+                    // Has selection-dependent behavior — fall through
+                } else if actionName == "indent" || actionName == "outdent" {
+                    // Tab needs special handling — fall through
+                } else if let outlineAction = ShortcutManager.outlineAction(for: actionName) {
+                    actionHandler?(outlineAction)
+                    return
+                }
             }
 
             // Escape → Clear suggestion / clear selection / zoom to root
@@ -1935,47 +1903,15 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
                 return
             }
 
-            // Cmd+Shift+H → Go home and collapse all
-            if key.keyCode == .keyboardH, hasCommand, hasShift, !hasOption {
-                actionHandler?(.goHomeAndCollapseAll)
-                return
-            }
-
-            // --- Collapse / Expand ---
-
-            // Cmd+Shift+Option+Up → Collapse all children
-            if key.keyCode == .keyboardUpArrow, hasCommand, hasShift, hasOption {
-                actionHandler?(.collapseAll)
-                return
-            }
-
-            // Cmd+Shift+Up → Collapse
-            if key.keyCode == .keyboardUpArrow, hasCommand, hasShift, !hasOption {
-                actionHandler?(.collapse)
-                return
-            }
-
-            // Cmd+Shift+Option+Down → Expand all children
-            if key.keyCode == .keyboardDownArrow, hasCommand, hasShift, hasOption {
-                actionHandler?(.expandAll)
-                return
-            }
-
-            // Cmd+Shift+Down → Expand
-            if key.keyCode == .keyboardDownArrow, hasCommand, hasShift, !hasOption {
-                actionHandler?(.expand)
-                return
-            }
-
             // --- Move / Reorder ---
 
-            // Shift+Option+Up → Move bullet up
+            // Shift+Option+Up → Move bullet up (hardcoded alternative to Ctrl+Cmd+Up)
             if key.keyCode == .keyboardUpArrow, hasShift, hasOption, !hasCommand {
                 actionHandler?(.moveUp)
                 return
             }
 
-            // Shift+Option+Down → Move bullet down
+            // Shift+Option+Down → Move bullet down (hardcoded alternative to Ctrl+Cmd+Down)
             if key.keyCode == .keyboardDownArrow, hasShift, hasOption, !hasCommand {
                 actionHandler?(.moveDown)
                 return
@@ -2058,26 +1994,6 @@ class WrappingTextView: UITextView, UIGestureRecognizerDelegate {
                 } else {
                     actionHandler?(.deleteWithChildren)
                 }
-                return
-            }
-
-            // --- Toggle ---
-
-            // Cmd+Shift+L → Toggle task
-            if key.keyCode == .keyboardL, hasCommand, hasShift, !hasOption {
-                actionHandler?(.toggleTask)
-                return
-            }
-
-            // Cmd+Shift+F → Toggle focus mode
-            if key.keyCode == .keyboardF, hasCommand, hasShift, !hasOption {
-                actionHandler?(.toggleFocusMode)
-                return
-            }
-
-            // Cmd+F → Toggle search
-            if key.keyCode == .keyboardF, hasCommand, !hasShift, !hasOption {
-                actionHandler?(.toggleSearch)
                 return
             }
 

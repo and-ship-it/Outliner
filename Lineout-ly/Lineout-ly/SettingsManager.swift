@@ -27,6 +27,7 @@ final class SettingsManager {
         static let selectedReminderListIds = "selectedReminderListIds"
         static let dismissedCalendarEventIds = "dismissedCalendarEventIds"
         static let dismissedReminderIds = "dismissedReminderIds"
+        static let customKeyboardShortcuts = "customKeyboardShortcuts"
     }
 
     // MARK: - Settings Properties
@@ -116,6 +117,13 @@ final class SettingsManager {
         }
     }
 
+    /// Custom keyboard shortcut bindings (JSON-encoded Data). Empty = all defaults.
+    var customKeyboardShortcutsData: Data {
+        didSet {
+            save(customKeyboardShortcutsData, forKey: Keys.customKeyboardShortcuts)
+        }
+    }
+
     // MARK: - Dismissed Item Helpers
 
     func dismissCalendarEvent(_ id: String) {
@@ -152,6 +160,7 @@ final class SettingsManager {
         selectedReminderListIds = store.object(forKey: Keys.selectedReminderListIds) as? [String] ?? []
         dismissedCalendarEventIds = store.object(forKey: Keys.dismissedCalendarEventIds) as? [String] ?? []
         dismissedReminderIds = store.object(forKey: Keys.dismissedReminderIds) as? [String] ?? []
+        customKeyboardShortcutsData = store.object(forKey: Keys.customKeyboardShortcuts) as? Data ?? Data()
 
         // Observe iCloud changes from other devices
         NotificationCenter.default.addObserver(
@@ -238,6 +247,11 @@ final class SettingsManager {
                 case Keys.dismissedReminderIds:
                     if let value = store.object(forKey: key) as? [String] {
                         dismissedReminderIds = value
+                    }
+                case Keys.customKeyboardShortcuts:
+                    if let value = store.object(forKey: key) as? Data {
+                        customKeyboardShortcutsData = value
+                        ShortcutManager.shared.loadFromSettings()
                     }
                 default:
                     break
