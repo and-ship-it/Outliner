@@ -894,8 +894,8 @@ final class OutlineDocument {
 
     func deleteFocused() {
         guard let focused = focusedNode else { return }
-        // Don't allow deleting date nodes
-        guard !focused.isDateNode else { return }
+        // Don't allow deleting structural nodes (date nodes, section headers, placeholders, calendar events)
+        guard !focused.isStructural else { return }
 
         // Check if this is the last node - if so, just clear it instead of deleting
         let visible = visibleNodes
@@ -995,16 +995,16 @@ final class OutlineDocument {
     /// The text from the current bullet is appended to the previous bullet
     func mergeWithPrevious(textToMerge: String, zoomedNodeId: UUID?, collapsedNodeIds: Set<UUID>) {
         guard let focused = focusedNode else { return }
-        // Don't merge date nodes or reminder metadata children
-        guard !focused.isDateNode else { return }
+        // Don't merge structural nodes or reminder metadata children
+        guard !focused.isStructural else { return }
         guard focused.reminderChildType == nil else { return }
 
         let visible = self.visibleNodes(zoomedNodeId: zoomedNodeId, collapsedNodeIds: collapsedNodeIds)
         guard let index = visible.firstIndex(of: focused), index > 0 else { return }
 
         let previousNode = visible[index - 1]
-        // Don't merge into a date node
-        guard !previousNode.isDateNode else { return }
+        // Don't merge into a structural node
+        guard !previousNode.isStructural else { return }
         let previousTitle = previousNode.title
 
         // Save state for undo
@@ -1055,8 +1055,8 @@ final class OutlineDocument {
     /// Delete the focused node and all its children
     func deleteFocusedWithChildren() {
         guard let focused = focusedNode else { return }
-        // Don't allow deleting date nodes
-        guard !focused.isDateNode else { return }
+        // Don't allow deleting structural nodes (date nodes, section headers, placeholders, calendar events)
+        guard !focused.isStructural else { return }
 
         // Check if this is the last top-level node - if so, just clear it instead of deleting
         let visible = visibleNodes
@@ -1238,6 +1238,9 @@ final class OutlineDocument {
 
         for nodeId in selectedNodeIds {
             if let node = root.find(id: nodeId) {
+                // Skip structural nodes (date nodes, section headers, placeholders, calendar events)
+                guard !node.isStructural else { continue }
+
                 // Only save top-level selected nodes (not children of other selected nodes)
                 let isChildOfSelected = node.pathFromRoot().dropLast().contains { selectedNodeIds.contains($0.id) }
                 if !isChildOfSelected {
@@ -1397,9 +1400,18 @@ final class OutlineDocument {
               let parent = focused.parent,
               let index = focused.indexInParent,
               index > 0 else { return }
-        // Don't allow moving date nodes or reminder metadata children
+        // Don't allow moving date nodes, placeholders, or reminder metadata children
         guard !focused.isDateNode else { return }
+        guard !focused.isPlaceholder else { return }
         guard focused.reminderChildType == nil else { return }
+        // Section headers can only move within their date node parent
+        if focused.isSectionHeader {
+            guard parent.isDateNode else { return }
+        }
+        // Calendar events can only move within their calendar section (same parent)
+        if focused.isCalendarEvent {
+            guard parent.isSectionHeader && parent.sectionType == "calendar" else { return }
+        }
 
         let swappedSibling = parent.children[index - 1]
         parent.children.remove(at: index)
@@ -1419,9 +1431,18 @@ final class OutlineDocument {
               let parent = focused.parent,
               let index = focused.indexInParent,
               index < parent.children.count - 1 else { return }
-        // Don't allow moving date nodes or reminder metadata children
+        // Don't allow moving date nodes, placeholders, or reminder metadata children
         guard !focused.isDateNode else { return }
+        guard !focused.isPlaceholder else { return }
         guard focused.reminderChildType == nil else { return }
+        // Section headers can only move within their date node parent
+        if focused.isSectionHeader {
+            guard parent.isDateNode else { return }
+        }
+        // Calendar events can only move within their calendar section (same parent)
+        if focused.isCalendarEvent {
+            guard parent.isSectionHeader && parent.sectionType == "calendar" else { return }
+        }
 
         let swappedSibling = parent.children[index + 1]
         parent.children.remove(at: index)
@@ -1466,8 +1487,8 @@ final class OutlineDocument {
         guard let focused = focusedNode,
               let parent = focused.parent,
               let previousSibling = focused.previousSibling else { return }
-        // Don't allow indenting date nodes or reminder metadata children
-        guard !focused.isDateNode else { return }
+        // Don't allow indenting structural nodes or reminder metadata children
+        guard !focused.isStructural else { return }
         guard focused.reminderChildType == nil else { return }
 
         let originalParentId = parent.id
@@ -1570,8 +1591,8 @@ final class OutlineDocument {
         guard let focused = focusedNode,
               let parent = focused.parent,
               let grandparent = parent.parent else { return }
-        // Don't allow outdenting date nodes or reminder metadata children
-        guard !focused.isDateNode else { return }
+        // Don't allow outdenting structural nodes or reminder metadata children
+        guard !focused.isStructural else { return }
         guard focused.reminderChildType == nil else { return }
         // Cannot outdent beyond zoom boundary — zoom out first
         if let boundaryId = zoomBoundaryId, parent.id == boundaryId { return }
@@ -1903,6 +1924,10 @@ extension OutlineDocument {
             existingNode.reminderChildType = change.reminderChildType
             existingNode.isDateNode = change.isDateNode
             existingNode.dateNodeDate = change.dateNodeDate
+            existingNode.sectionType = change.sectionType
+            existingNode.calendarEventIdentifier = change.calendarEventIdentifier
+            existingNode.calendarName = change.calendarName
+            existingNode.isPlaceholder = change.isPlaceholder
 
             // Check if parent changed (node was moved remotely)
             let currentParentId = existingNode.parent?.id
@@ -1938,7 +1963,11 @@ extension OutlineDocument {
                 reminderChildType: change.reminderChildType,
                 isUnseen: true,
                 isDateNode: change.isDateNode,
-                dateNodeDate: change.dateNodeDate
+                dateNodeDate: change.dateNodeDate,
+                sectionType: change.sectionType,
+                calendarEventIdentifier: change.calendarEventIdentifier,
+                calendarName: change.calendarName,
+                isPlaceholder: change.isPlaceholder
             )
 
             // Find parent

@@ -90,6 +90,12 @@ struct NodeRecordMapper {
             record["dateNodeDate"] = nil
         }
 
+        // Section & calendar fields
+        record["sectionType"] = node.sectionType as CKRecordValue?
+        record["calendarEventIdentifier"] = node.calendarEventIdentifier as CKRecordValue?
+        record["calendarName"] = node.calendarName as CKRecordValue?
+        record["isPlaceholder"] = (node.isPlaceholder ? 1 : 0) as CKRecordValue
+
         return record
     }
 
@@ -113,6 +119,10 @@ struct NodeRecordMapper {
         let reminderChildType: String?
         let isDateNode: Bool
         let dateNodeDate: Date?
+        let sectionType: String?
+        let calendarEventIdentifier: String?
+        let calendarName: String?
+        let isPlaceholder: Bool
     }
 
     /// Extract node data from a CKRecord
@@ -140,6 +150,10 @@ struct NodeRecordMapper {
         let reminderChildType = record["reminderChildType"] as? String
         let isDateNode = (record["isDateNode"] as? Int64 ?? 0) != 0
         let dateNodeDate = record["dateNodeDate"] as? Date
+        let sectionType = record["sectionType"] as? String
+        let calendarEventIdentifier = record["calendarEventIdentifier"] as? String
+        let calendarName = record["calendarName"] as? String
+        let isPlaceholder = (record["isPlaceholder"] as? Int64 ?? 0) != 0
 
         // Encode system fields for future partial updates
         let coder = NSKeyedArchiver(requiringSecureCoding: true)
@@ -163,7 +177,11 @@ struct NodeRecordMapper {
             reminderTimeMinute: reminderTimeMinute,
             reminderChildType: reminderChildType,
             isDateNode: isDateNode,
-            dateNodeDate: dateNodeDate
+            dateNodeDate: dateNodeDate,
+            sectionType: sectionType,
+            calendarEventIdentifier: calendarEventIdentifier,
+            calendarName: calendarName,
+            isPlaceholder: isPlaceholder
         )
     }
 

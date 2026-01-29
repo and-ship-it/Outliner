@@ -39,7 +39,35 @@ struct BulletView: View {
                 }
 
                 // The actual bullet/disclosure
-                if node.hasChildren {
+                if node.isPlaceholder {
+                    // Placeholder — no bullet, just empty space
+                    Color.clear
+                        .frame(width: bulletSize, height: bulletSize)
+                } else if node.isSectionHeader {
+                    // Section header — SF Symbol icon, with chevron only when has real children
+                    let icon = node.sectionType == "calendar" ? "calendar" : "checklist"
+                    let hasRealChildren = node.children.contains(where: { !$0.isPlaceholder })
+                    HStack(spacing: 2 * scale) {
+                        Image(systemName: icon)
+                            .font(.system(size: chevronSize, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        if hasRealChildren {
+                            Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                                .font(.system(size: chevronSize * 0.7, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                } else if node.isCalendarEvent {
+                    // Calendar event — calendar icon
+                    Image(systemName: "calendar")
+                        .font(.system(size: chevronSize * 0.9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                } else if node.reminderIdentifier != nil {
+                    // Reminder — dashed circle icon
+                    Image(systemName: "circle.dashed")
+                        .font(.system(size: chevronSize * 0.9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                } else if node.hasChildren {
                     // Disclosure triangle - teal for structure, amber when focused
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                         .font(.system(size: chevronSize, weight: .semibold))

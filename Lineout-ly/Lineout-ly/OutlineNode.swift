@@ -69,7 +69,30 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
     /// Used to infer due dates for child reminder tasks.
     var dateNodeDate: Date?
 
+    // MARK: - Section & Calendar Properties
+
+    /// Section type for container nodes: "calendar" or "reminders". Nil for normal nodes.
+    var sectionType: String?
+
+    /// EKEvent calendarItemIdentifier for calendar event nodes. Non-nil = read-only calendar event.
+    var calendarEventIdentifier: String?
+
+    /// Calendar name for calendar events (e.g., "Work", "Personal") for display purposes.
+    var calendarName: String?
+
+    /// Whether this is an empty-section placeholder node ("no calendar events on this day").
+    var isPlaceholder: Bool
+
     // MARK: - Computed Properties
+
+    /// Whether this node is a section header (calendar or reminders container)
+    var isSectionHeader: Bool { sectionType != nil }
+
+    /// Whether this node is a read-only calendar event
+    var isCalendarEvent: Bool { calendarEventIdentifier != nil }
+
+    /// Whether this node is structural (cannot be deleted by user actions)
+    var isStructural: Bool { isDateNode || isSectionHeader || isPlaceholder || isCalendarEvent }
 
     var hasChildren: Bool { !children.isEmpty }
     var hasBody: Bool { !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -141,7 +164,11 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         reminderChildType: String? = nil,
         isUnseen: Bool = false,
         isDateNode: Bool = false,
-        dateNodeDate: Date? = nil
+        dateNodeDate: Date? = nil,
+        sectionType: String? = nil,
+        calendarEventIdentifier: String? = nil,
+        calendarName: String? = nil,
+        isPlaceholder: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -161,6 +188,10 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         self.isUnseen = isUnseen
         self.isDateNode = isDateNode
         self.dateNodeDate = dateNodeDate
+        self.sectionType = sectionType
+        self.calendarEventIdentifier = calendarEventIdentifier
+        self.calendarName = calendarName
+        self.isPlaceholder = isPlaceholder
 
         // Set parent references for children
         for child in children {
@@ -337,7 +368,11 @@ extension OutlineNode {
             reminderTimeMinute: self.reminderTimeMinute,
             reminderChildType: self.reminderChildType,
             isDateNode: self.isDateNode,
-            dateNodeDate: self.dateNodeDate
+            dateNodeDate: self.dateNodeDate,
+            sectionType: self.sectionType,
+            calendarEventIdentifier: self.calendarEventIdentifier,
+            calendarName: self.calendarName,
+            isPlaceholder: self.isPlaceholder
         )
         return copy
     }

@@ -129,6 +129,51 @@ struct NodeRow: View {
         return Calendar.current.startOfDay(for: Date()) > Calendar.current.startOfDay(for: dueDate)
     }
 
+    /// Whether this section header has no real children (only placeholders or empty)
+    var sectionIsEmpty: Bool {
+        guard node.isSectionHeader else { return false }
+        return !node.children.contains(where: { !$0.isPlaceholder })
+    }
+
+    /// The base name for section headers (derived from sectionType)
+    private var sectionBaseName: String {
+        node.sectionType ?? ""
+    }
+
+    /// The display prefix for an empty section header (base name + empty indicator)
+    private var sectionEmptyPrefix: String {
+        let emptyText = node.sectionType == "calendar"
+            ? "no calendar events on this day"
+            : "no reminders on this day"
+        return "\(sectionBaseName) · \(emptyText)"
+    }
+
+    /// Any user-added text after the section base name (stored in node.title)
+    private var sectionUserText: String {
+        let base = sectionBaseName
+        guard node.title.hasPrefix(base) else { return "" }
+        return String(node.title.dropFirst(base.count))
+    }
+
+    /// Display title for section headers — includes inline placeholder text when empty
+    var sectionDisplayTitle: String {
+        guard node.isSectionHeader else { return node.title }
+        if sectionIsEmpty {
+            return sectionEmptyPrefix + sectionUserText
+        }
+        return node.title
+    }
+
+    /// Text color for the node based on its type
+    var nodeTextColor: Color {
+        if node.isPlaceholder { return .secondary }
+        if node.isSectionHeader { return .secondary }
+        if node.isCalendarEvent { return .primary }
+        if node.isTask && node.isTaskCompleted { return .secondary }
+        if node.isUnseen { return .blue }
+        return .primary
+    }
+
     /// Whether this node is under a past date node (should be faded).
     /// Date nodes themselves are never faded — only their children.
     var isPastDate: Bool {
@@ -754,9 +799,22 @@ struct NodeRow: View {
             text: Binding(
                 get: {
                     let prefix = reminderChildPrefix(for: node)
+                    // Empty section headers show inline placeholder text
+                    if node.isSectionHeader && sectionIsEmpty {
+                        return prefix + sectionDisplayTitle
+                    }
                     return prefix + node.title
                 },
                 set: { newValue in
+                    // Empty section headers: strip display prefix, save base name + user text
+                    if node.isSectionHeader && sectionIsEmpty {
+                        let displayPrefix = sectionEmptyPrefix
+                        if newValue.count >= displayPrefix.count {
+                            node.title = sectionBaseName + String(newValue.dropFirst(displayPrefix.count))
+                        }
+                        document.contentDidChange(nodeId: node.id)
+                        return
+                    }
                     let prefix = reminderChildPrefix(for: node)
                     node.title = prefix.isEmpty ? newValue : String(newValue.dropFirst(prefix.count))
                     document.contentDidChange(nodeId: node.id)  // Trigger auto-save
@@ -818,9 +876,10 @@ struct NodeRow: View {
         if shouldShowTruncated {
             // Truncated view - tap to expand or focus
             VStack(alignment: .leading, spacing: 2) {
-                Text(node.title)
-                    .font(.system(size: fontSize, weight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : .regular))
-                    .foregroundColor(node.isTask && node.isTaskCompleted ? .secondary : (node.isUnseen ? Color.blue : .primary))
+                Text(node.isSectionHeader ? sectionDisplayTitle : node.title)
+                    .font(.system(size: fontSize, weight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : (node.isSectionHeader ? .medium : .regular)))
+                    .foregroundColor(nodeTextColor)
+                    .italic(node.isPlaceholder)
                     .strikethrough(node.isTask && node.isTaskCompleted)
                     .lineLimit(maxLinesWhenCollapsed)
                     .truncationMode(.tail)
@@ -844,9 +903,22 @@ struct NodeRow: View {
                 text: Binding(
                     get: {
                         let prefix = reminderChildPrefix(for: node)
+                        // Empty section headers show inline placeholder text
+                        if node.isSectionHeader && sectionIsEmpty {
+                            return prefix + sectionDisplayTitle
+                        }
                         return prefix + node.title
                     },
                     set: { newValue in
+                        // Empty section headers: strip display prefix, save base name + user text
+                        if node.isSectionHeader && sectionIsEmpty {
+                            let displayPrefix = sectionEmptyPrefix
+                            if newValue.count >= displayPrefix.count {
+                                node.title = sectionBaseName + String(newValue.dropFirst(displayPrefix.count))
+                            }
+                            document.contentDidChange(nodeId: node.id)
+                            return
+                        }
                         let prefix = reminderChildPrefix(for: node)
                         node.title = prefix.isEmpty ? newValue : String(newValue.dropFirst(prefix.count))
                         document.contentDidChange(nodeId: node.id)  // Trigger auto-save
@@ -966,6 +1038,14 @@ struct NodeRow: View {
     private func protectedPrefixLength(for node: OutlineNode) -> Int {
         if node.isDateNode {
             return dateNodePrefixLength(for: node)
+        }
+        // Section headers: protect display prefix (base name + empty indicator when empty, full title otherwise)
+        if node.isSectionHeader {
+            return sectionIsEmpty ? sectionEmptyPrefix.count : node.title.count
+        }
+        // Calendar events and placeholders are fully non-editable
+        if node.isCalendarEvent || node.isPlaceholder {
+            return node.title.count
         }
         if node.reminderChildType == "recurrence" {
             // Entire text is non-editable (prefix + title)

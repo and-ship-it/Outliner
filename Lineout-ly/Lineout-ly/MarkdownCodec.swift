@@ -87,12 +87,14 @@ struct MarkdownCodec {
                 parent.addChild(node)
                 index += 1
 
-                // Check for metadata comment on the next line (reminder or rtype)
-                if index < lines.count {
+                // Check for metadata comments on subsequent lines
+                while index < lines.count {
                     let metaLine = lines[index].trimmingCharacters(in: .whitespaces)
-                    if (metaLine.hasPrefix("<!-- reminder:") || metaLine.hasPrefix("<!-- rtype:")) && metaLine.hasSuffix("-->") {
-                        parseReminderMetadata(metaLine, into: node)
+                    if metaLine.hasPrefix("<!--") && metaLine.hasSuffix("-->") {
+                        parseNodeMetadata(metaLine, into: node)
                         index += 1
+                    } else {
+                        break
                     }
                 }
 
@@ -176,15 +178,40 @@ struct MarkdownCodec {
         return (true, indent, content.hasPrefix(bulletPrefix))
     }
 
-    // MARK: - Reminder Metadata
+    // MARK: - Node Metadata
 
-    /// Parse a reminder metadata comment like `<!-- reminder:ABC123 list:Shopping time:9:30 -->`
-    private static func parseReminderMetadata(_ line: String, into node: OutlineNode) {
+    /// Parse a metadata comment like `<!-- reminder:ABC123 list:Shopping time:9:30 -->`,
+    /// `<!-- section:calendar -->`, `<!-- calevent:ID cal:Name -->`, or `<!-- placeholder -->`
+    private static func parseNodeMetadata(_ line: String, into node: OutlineNode) {
         // Strip <!-- and -->
         var content = line
             .replacingOccurrences(of: "<!--", with: "")
             .replacingOccurrences(of: "-->", with: "")
             .trimmingCharacters(in: .whitespaces)
+
+        // Parse "section:calendar" or "section:reminders"
+        if content.hasPrefix("section:") {
+            node.sectionType = String(content.dropFirst("section:".count))
+            return
+        }
+
+        // Parse "calevent:ID cal:Name"
+        if content.hasPrefix("calevent:") {
+            content = String(content.dropFirst("calevent:".count))
+            if let calRange = content.range(of: " cal:") {
+                node.calendarEventIdentifier = String(content[content.startIndex..<calRange.lowerBound])
+                node.calendarName = String(content[calRange.upperBound...])
+            } else {
+                node.calendarEventIdentifier = content
+            }
+            return
+        }
+
+        // Parse "placeholder"
+        if content == "placeholder" {
+            node.isPlaceholder = true
+            return
+        }
 
         // Parse "reminder:ID" and optionally "list:Name" and "time:HH:MM"
         if content.hasPrefix("reminder:") {
@@ -212,11 +239,13 @@ struct MarkdownCodec {
             } else {
                 node.reminderIdentifier = content
             }
+            return
         }
 
         // Parse "rtype:note" or "rtype:link" for metadata children
         if content.hasPrefix("rtype:") {
             node.reminderChildType = String(content.dropFirst("rtype:".count))
+            return
         }
     }
 
@@ -239,6 +268,25 @@ struct MarkdownCodec {
         // Title line (with optional task checkbox)
         let taskPrefix = node.isTask ? (node.isTaskCompleted ? "[x] " : "[ ] ") : ""
         lines.append("\(indentString)\(bulletPrefix)\(taskPrefix)\(node.title)")
+
+        // Section metadata comment (calendar or reminders container)
+        if let sectionType = node.sectionType {
+            let bodyIndent = String(repeating: " ", count: (indent + 1) * indentSize)
+            lines.append("\(bodyIndent)<!-- section:\(sectionType) -->")
+        }
+
+        // Calendar event metadata comment
+        if let eventId = node.calendarEventIdentifier {
+            let calPart = node.calendarName.map { " cal:\($0)" } ?? ""
+            let bodyIndent = String(repeating: " ", count: (indent + 1) * indentSize)
+            lines.append("\(bodyIndent)<!-- calevent:\(eventId)\(calPart) -->")
+        }
+
+        // Placeholder metadata comment
+        if node.isPlaceholder {
+            let bodyIndent = String(repeating: " ", count: (indent + 1) * indentSize)
+            lines.append("\(bodyIndent)<!-- placeholder -->")
+        }
 
         // Reminder metadata comment (if synced with Apple Reminders)
         if let reminderId = node.reminderIdentifier {

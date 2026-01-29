@@ -313,9 +313,9 @@ final class ReminderSyncEngine {
 
                         if weekStartDays.contains(remDay),
                            let newDateNode = DateStructureManager.shared.dateNode(for: remDueDate, in: document) {
-                            // Within current week — move node to new date
+                            // Within current week — move node to new date's reminders section
                             node.removeFromParent()
-                            insertNodeSortedByTime(node, under: newDateNode)
+                            insertNodeSortedByTime(node, under: remindersSection(for: newDateNode))
                             didChange = true
                             print("[Reminders] Moved reminder to new date: \(node.title) → \(newDateNode.title)")
                         } else {
@@ -415,7 +415,7 @@ final class ReminderSyncEngine {
                     let cal = Calendar.current
                     if currentDate.map({ cal.startOfDay(for: $0) }) != cal.startOfDay(for: dueDate) {
                         existingNode.removeFromParent()
-                        insertNodeSortedByTime(existingNode, under: dateNode)
+                        insertNodeSortedByTime(existingNode, under: remindersSection(for: dateNode))
                     }
 
                     _ = syncNotesInbound(from: reminder, to: existingNode)
@@ -428,10 +428,11 @@ final class ReminderSyncEngine {
                 }
             }
 
-            // Also check for duplicate under the same date node (same title, already tracked).
+            // Also check for duplicate under the reminders section (same title, already tracked).
             // This catches multi-device sync races and non-recurring duplicates.
+            let remSection = remindersSection(for: dateNode)
             if !reminderTitle.isEmpty,
-               let existingUnderDate = dateNode.children.first(where: {
+               let existingUnderDate = remSection.children.first(where: {
                    $0.reminderIdentifier != nil &&
                    $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == reminderTitle
                }) {
@@ -469,8 +470,8 @@ final class ReminderSyncEngine {
                 newNode.reminderTimeMinute = m
             }
 
-            // Insert sorted by time (new imports only)
-            insertNodeSortedByTime(newNode, under: dateNode)
+            // Insert sorted by time into the reminders section
+            insertNodeSortedByTime(newNode, under: remindersSection(for: dateNode))
 
             // Sync notes → metadata child
             _ = syncNotesInbound(from: reminder, to: newNode)
@@ -485,14 +486,15 @@ final class ReminderSyncEngine {
             print("[Reminders] Created node from external reminder: \(reminder.title ?? "")")
         }
 
-        // Step 2.5: Clean up existing duplicates under the same date node.
+        // Step 2.5: Clean up existing duplicates under each reminders section.
         // Handles duplicates that accumulated before the dedup fix above.
         let dateNodes = document.root.children.filter { $0.isDateNode }
         for dateNode in dateNodes {
+            let remSectionForDedup = remindersSection(for: dateNode)
             var seenTitles: [String: OutlineNode] = [:]
             var duplicatesToRemove: [OutlineNode] = []
 
-            for child in dateNode.children {
+            for child in remSectionForDedup.children {
                 guard child.reminderIdentifier != nil, child.reminderChildType == nil else { continue }
                 let title = child.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !title.isEmpty else { continue }
@@ -590,7 +592,9 @@ final class ReminderSyncEngine {
             }
         }
 
+        // Update placeholders for all reminders sections
         if didChange {
+            DateStructureManager.shared.ensureAllPlaceholders(in: document)
             document.structureVersion += 1
             iCloudManager.shared.scheduleAutoSave(for: document)
         }
@@ -636,6 +640,13 @@ final class ReminderSyncEngine {
 
     /// Insert a new node under a date node, sorted by time.
     /// Nodes without time go to the end. Only used for new imports — existing nodes are not re-sorted.
+    /// Find the "reminders" section under a date node, falling back to the date node itself.
+    private func remindersSection(for dateNode: OutlineNode) -> OutlineNode {
+        guard let date = dateNode.dateNodeDate else { return dateNode }
+        let sectionId = DateStructureManager.deterministicSectionUUID(for: date, sectionType: "reminders")
+        return dateNode.children.first(where: { $0.id == sectionId }) ?? dateNode
+    }
+
     private func insertNodeSortedByTime(_ node: OutlineNode, under dateNode: OutlineNode) {
         guard let hour = node.reminderTimeHour, let minute = node.reminderTimeMinute else {
             // No time — append at end

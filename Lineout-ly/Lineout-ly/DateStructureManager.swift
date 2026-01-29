@@ -192,6 +192,167 @@ final class DateStructureManager {
         }
     }
 
+    // MARK: - Deterministic Section/Placeholder UUIDs
+
+    /// Generate a deterministic UUID for a section node (calendar or reminders) under a date.
+    static func deterministicSectionUUID(for date: Date, sectionType: String) -> UUID {
+        let startOfDay = Calendar.current.startOfDay(for: date)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate]
+        let dateString = formatter.string(from: startOfDay)
+
+        let input = "lineout-ly-section:\(dateString):\(sectionType)"
+        let hash = SHA256.hash(data: Data(input.utf8))
+        let bytes = Array(hash)
+
+        var uuidBytes: uuid_t = (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        )
+        uuidBytes.6 = (uuidBytes.6 & 0x0F) | 0x40
+        uuidBytes.8 = (uuidBytes.8 & 0x3F) | 0x80
+        return UUID(uuid: uuidBytes)
+    }
+
+    /// Generate a deterministic UUID for a placeholder node under a section.
+    static func deterministicPlaceholderUUID(for date: Date, sectionType: String) -> UUID {
+        let startOfDay = Calendar.current.startOfDay(for: date)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate]
+        let dateString = formatter.string(from: startOfDay)
+
+        let input = "lineout-ly-placeholder:\(dateString):\(sectionType)"
+        let hash = SHA256.hash(data: Data(input.utf8))
+        let bytes = Array(hash)
+
+        var uuidBytes: uuid_t = (
+            bytes[0], bytes[1], bytes[2], bytes[3],
+            bytes[4], bytes[5], bytes[6], bytes[7],
+            bytes[8], bytes[9], bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15]
+        )
+        uuidBytes.6 = (uuidBytes.6 & 0x0F) | 0x40
+        uuidBytes.8 = (uuidBytes.8 & 0x3F) | 0x80
+        return UUID(uuid: uuidBytes)
+    }
+
+    // MARK: - Ensure Section Nodes
+
+    /// Ensure "calendar" and "reminders" section headers exist under each date node.
+    /// Calendar section at index 0, reminders at index 1 (initial position only — user can reorder).
+    func ensureSectionNodes(in document: OutlineDocument) {
+        var created = false
+
+        for dateNode in document.root.children where dateNode.isDateNode {
+            guard let date = dateNode.dateNodeDate else { continue }
+
+            let calendarSectionId = Self.deterministicSectionUUID(for: date, sectionType: "calendar")
+            let remindersSectionId = Self.deterministicSectionUUID(for: date, sectionType: "reminders")
+
+            // Create calendar section if not present
+            if !dateNode.children.contains(where: { $0.id == calendarSectionId }) {
+                let calSection = OutlineNode(
+                    id: calendarSectionId,
+                    title: "calendar",
+                    sectionType: "calendar"
+                )
+                dateNode.addChild(calSection, at: 0)
+                created = true
+            }
+
+            // Create reminders section if not present
+            if !dateNode.children.contains(where: { $0.id == remindersSectionId }) {
+                let remSection = OutlineNode(
+                    id: remindersSectionId,
+                    title: "reminders",
+                    sectionType: "reminders"
+                )
+                // Insert after calendar section (index 1) or at 0 if calendar isn't at 0
+                let insertIdx = dateNode.children.firstIndex(where: { $0.id == calendarSectionId })
+                    .map { $0 + 1 } ?? 1
+                dateNode.addChild(remSection, at: min(insertIdx, dateNode.children.count))
+                created = true
+            }
+        }
+
+        if created {
+            // Ensure placeholders for empty sections
+            ensureAllPlaceholders(in: document)
+            document.structureVersion += 1
+            print("[DateStructure] Created section nodes under date nodes")
+        }
+    }
+
+    // MARK: - Placeholder Management
+
+    /// Ensure all section nodes have correct placeholder state.
+    func ensureAllPlaceholders(in document: OutlineDocument) {
+        for dateNode in document.root.children where dateNode.isDateNode {
+            guard let date = dateNode.dateNodeDate else { continue }
+            for section in dateNode.children where section.isSectionHeader {
+                let sectionType = section.sectionType ?? "calendar"
+                ensurePlaceholder(in: section, date: date, sectionType: sectionType)
+            }
+        }
+    }
+
+    /// Manage placeholder for a section:
+    /// - If section has non-placeholder children → remove placeholder
+    /// - If section has no non-placeholder children → add placeholder
+    func ensurePlaceholder(in section: OutlineNode, date: Date, sectionType: String) {
+        let placeholderId = Self.deterministicPlaceholderUUID(for: date, sectionType: sectionType)
+        let hasRealChildren = section.children.contains(where: { !$0.isPlaceholder })
+        let existingPlaceholder = section.children.first(where: { $0.id == placeholderId })
+
+        if hasRealChildren {
+            // Remove placeholder if it exists
+            existingPlaceholder?.removeFromParent()
+        } else if existingPlaceholder == nil {
+            // Add placeholder
+            let placeholderText = sectionType == "calendar"
+                ? "no calendar events on this day"
+                : "no reminders on this day"
+            let placeholder = OutlineNode(
+                id: placeholderId,
+                title: placeholderText,
+                isPlaceholder: true
+            )
+            section.addChild(placeholder)
+        }
+    }
+
+    // MARK: - Migration
+
+    /// One-time migration: move reminder nodes from directly under date nodes into "reminders" sections.
+    func migrateRemindersIntoSections(in document: OutlineDocument) {
+        var migrated = 0
+
+        for dateNode in document.root.children where dateNode.isDateNode {
+            guard let date = dateNode.dateNodeDate else { continue }
+            let remindersSectionId = Self.deterministicSectionUUID(for: date, sectionType: "reminders")
+            guard let remindersSection = dateNode.children.first(where: { $0.id == remindersSectionId }) else { continue }
+
+            // Find reminder nodes directly under the date node (not under a section)
+            let remindersToMove = dateNode.children.filter { node in
+                node.reminderIdentifier != nil && node.sectionType == nil
+            }
+
+            for reminder in remindersToMove {
+                reminder.removeFromParent()
+                remindersSection.addChild(reminder)
+                migrated += 1
+            }
+        }
+
+        if migrated > 0 {
+            ensureAllPlaceholders(in: document)
+            document.structureVersion += 1
+            print("[DateStructure] Migrated \(migrated) reminders into section containers")
+        }
+    }
+
     // MARK: - Lookup Helpers
 
     /// Find the date node for a given date

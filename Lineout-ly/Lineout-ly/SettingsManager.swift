@@ -20,6 +20,7 @@ final class SettingsManager {
         static let autocompleteEnabled = "autocompleteEnabled"
         static let defaultFontSize = "defaultFontSize"
         static let focusModeEnabled = "focusModeEnabled"
+        static let selectedCalendarIds = "selectedCalendarIds"
     }
 
     // MARK: - Settings Properties
@@ -58,6 +59,13 @@ final class SettingsManager {
         }
     }
 
+    /// Selected calendar identifiers for display (empty = all calendars)
+    var selectedCalendarIds: [String] {
+        didSet {
+            save(selectedCalendarIds, forKey: Keys.selectedCalendarIds)
+        }
+    }
+
     // MARK: - iCloud Key-Value Store
 
     private let store = NSUbiquitousKeyValueStore.default
@@ -68,6 +76,7 @@ final class SettingsManager {
         autocompleteEnabled = store.object(forKey: Keys.autocompleteEnabled) as? Bool ?? true
         defaultFontSize = store.object(forKey: Keys.defaultFontSize) as? Double ?? 13.0
         focusModeEnabled = store.object(forKey: Keys.focusModeEnabled) as? Bool ?? false
+        selectedCalendarIds = store.object(forKey: Keys.selectedCalendarIds) as? [String] ?? []
 
         // Observe iCloud changes from other devices
         NotificationCenter.default.addObserver(
@@ -126,6 +135,10 @@ final class SettingsManager {
                 case Keys.focusModeEnabled:
                     if let value = store.object(forKey: key) as? Bool {
                         focusModeEnabled = value
+                    }
+                case Keys.selectedCalendarIds:
+                    if let value = store.object(forKey: key) as? [String] {
+                        selectedCalendarIds = value
                     }
                 default:
                     break

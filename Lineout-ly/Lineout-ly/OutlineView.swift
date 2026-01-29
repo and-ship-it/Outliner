@@ -421,6 +421,8 @@ struct OutlineView: View {
     private func flattenedVisible(from node: OutlineNode) -> [OutlineNode] {
         var result: [OutlineNode] = []
         for child in node.children {
+            // Skip placeholder nodes — their text is shown inline on the section header
+            if child.isPlaceholder { continue }
             result.append(child)
             if !collapsedNodeIds.contains(child.id) {
                 result.append(contentsOf: flattenedVisible(from: child))
@@ -1315,6 +1317,17 @@ struct SettingsSheet: View {
                     Text("Calendar")
                 } footer: {
                     Text("Affects weekly document naming. Changes take effect on next app launch.")
+                }
+
+                // Calendar Events Section
+                Section {
+                    NavigationLink("Select Calendars") {
+                        CalendarPickerView()
+                    }
+                } header: {
+                    Text("Calendar Events")
+                } footer: {
+                    Text("Choose which calendars display events under each day.")
                 }
 
                 // About Section

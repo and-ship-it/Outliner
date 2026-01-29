@@ -136,6 +136,10 @@ struct CodableNode: Codable {
     var isUnseen: Bool?
     var isDateNode: Bool?
     var dateNodeDate: Date?
+    var sectionType: String?
+    var calendarEventIdentifier: String?
+    var calendarName: String?
+    var isPlaceholder: Bool?
     var children: [CodableNode]
 
     /// Create from an OutlineNode
@@ -157,6 +161,10 @@ struct CodableNode: Codable {
         self.isUnseen = node.isUnseen
         self.isDateNode = node.isDateNode
         self.dateNodeDate = node.dateNodeDate
+        self.sectionType = node.sectionType
+        self.calendarEventIdentifier = node.calendarEventIdentifier
+        self.calendarName = node.calendarName
+        self.isPlaceholder = node.isPlaceholder
         self.children = node.children.map { CodableNode(from: $0) }
     }
 
@@ -180,7 +188,11 @@ struct CodableNode: Codable {
             reminderChildType: reminderChildType,
             isUnseen: isUnseen ?? false,
             isDateNode: isDateNode ?? false,
-            dateNodeDate: dateNodeDate
+            dateNodeDate: dateNodeDate,
+            sectionType: sectionType,
+            calendarEventIdentifier: calendarEventIdentifier,
+            calendarName: calendarName,
+            isPlaceholder: isPlaceholder ?? false
         )
         return node
     }

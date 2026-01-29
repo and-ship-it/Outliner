@@ -117,11 +117,14 @@ struct ContentView: View {
             // Ensure date structure exists for current week
             if let doc = WindowManager.shared.document {
                 DateStructureManager.shared.ensureDateNodes(in: doc)
+                DateStructureManager.shared.ensureSectionNodes(in: doc)
+                DateStructureManager.shared.migrateRemindersIntoSections(in: doc)
 
                 // Collapse ALL nodes with children for fast launch
+                // (includes section headers which are collapsed by default)
                 var initialCollapsed = Set<UUID>()
                 for node in doc.root.flattened() {
-                    if node.hasChildren {
+                    if node.hasChildren || node.isSectionHeader {
                         initialCollapsed.insert(node.id)
                     }
                 }
@@ -157,6 +160,13 @@ struct ContentView: View {
             if remindersGranted {
                 ReminderSyncEngine.shared.startObserving()
                 await ReminderSyncEngine.shared.syncExternalChanges()
+            }
+
+            // Set up Apple Calendar one-way sync
+            let calendarGranted = await CalendarSyncEngine.shared.requestAccess()
+            if calendarGranted {
+                CalendarSyncEngine.shared.startObserving()
+                await CalendarSyncEngine.shared.syncCalendarEvents()
             }
         }
         .onDisappear {
@@ -235,6 +245,13 @@ struct ContentView: View {
             if ReminderSyncEngine.shared.isAuthorized {
                 Task {
                     await ReminderSyncEngine.shared.syncExternalChanges()
+                }
+            }
+
+            // Re-sync Calendar events in case user made changes while backgrounded
+            if CalendarSyncEngine.shared.isAuthorized {
+                Task {
+                    await CalendarSyncEngine.shared.syncCalendarEvents()
                 }
             }
 
