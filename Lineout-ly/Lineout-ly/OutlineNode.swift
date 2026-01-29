@@ -83,6 +83,9 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
     /// Whether this is an empty-section placeholder node ("no calendar events on this day").
     var isPlaceholder: Bool
 
+    /// Whether the source reminder is completed in Apple Reminders (for one-way sync strikethrough).
+    var isReminderCompleted: Bool
+
     // MARK: - Computed Properties
 
     /// Whether this node is a section header (calendar or reminders container)
@@ -92,7 +95,17 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
     var isCalendarEvent: Bool { calendarEventIdentifier != nil }
 
     /// Whether this node is structural (cannot be deleted by user actions)
-    var isStructural: Bool { isDateNode || isSectionHeader || isPlaceholder || isCalendarEvent }
+    var isStructural: Bool { isDateNode || isSectionHeader || isPlaceholder }
+
+    /// Whether this node is a read-only synced item (calendar event or one-way reminder)
+    @MainActor var isReadOnlySyncedItem: Bool {
+        isCalendarEvent || (reminderIdentifier != nil && !SettingsManager.shared.reminderBidirectionalSync)
+    }
+
+    /// Whether this node should show strikethrough (completed one-way reminder)
+    @MainActor var isOneWayReminderCompleted: Bool {
+        reminderIdentifier != nil && !SettingsManager.shared.reminderBidirectionalSync && isReminderCompleted
+    }
 
     var hasChildren: Bool { !children.isEmpty }
     var hasBody: Bool { !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -168,7 +181,8 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         sectionType: String? = nil,
         calendarEventIdentifier: String? = nil,
         calendarName: String? = nil,
-        isPlaceholder: Bool = false
+        isPlaceholder: Bool = false,
+        isReminderCompleted: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -192,6 +206,7 @@ final class OutlineNode: Identifiable, @unchecked Sendable {
         self.calendarEventIdentifier = calendarEventIdentifier
         self.calendarName = calendarName
         self.isPlaceholder = isPlaceholder
+        self.isReminderCompleted = isReminderCompleted
 
         // Set parent references for children
         for child in children {
@@ -372,7 +387,8 @@ extension OutlineNode {
             sectionType: self.sectionType,
             calendarEventIdentifier: self.calendarEventIdentifier,
             calendarName: self.calendarName,
-            isPlaceholder: self.isPlaceholder
+            isPlaceholder: self.isPlaceholder,
+            isReminderCompleted: self.isReminderCompleted
         )
         return copy
     }

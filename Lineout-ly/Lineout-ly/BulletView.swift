@@ -63,8 +63,8 @@ struct BulletView: View {
                         .font(.system(size: chevronSize * 0.9, weight: .medium))
                         .foregroundStyle(.secondary)
                 } else if node.reminderIdentifier != nil {
-                    // Reminder — dashed circle icon
-                    Image(systemName: "circle.dashed")
+                    // Reminder — checklist icon
+                    Image(systemName: "checklist")
                         .font(.system(size: chevronSize * 0.9, weight: .medium))
                         .foregroundStyle(.secondary)
                 } else if node.hasChildren {

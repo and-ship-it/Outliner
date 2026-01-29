@@ -213,9 +213,15 @@ struct MarkdownCodec {
             return
         }
 
-        // Parse "reminder:ID" and optionally "list:Name" and "time:HH:MM"
+        // Parse "reminder:ID" and optionally "list:Name" and "time:HH:MM" and "completed"
         if content.hasPrefix("reminder:") {
             content = String(content.dropFirst("reminder:".count))
+
+            // Check for "completed" keyword at the end
+            if content.hasSuffix(" completed") {
+                node.isReminderCompleted = true
+                content = String(content.dropLast(" completed".count))
+            }
 
             // Extract time:HH:MM if present
             if let timeRange = content.range(of: " time:") {
@@ -295,8 +301,9 @@ struct MarkdownCodec {
             if let hour = node.reminderTimeHour, let minute = node.reminderTimeMinute {
                 timePart = " time:\(hour):\(String(format: "%02d", minute))"
             }
+            let completedPart = node.isReminderCompleted ? " completed" : ""
             let bodyIndent = String(repeating: " ", count: (indent + 1) * indentSize)
-            lines.append("\(bodyIndent)<!-- reminder:\(reminderId)\(listPart)\(timePart) -->")
+            lines.append("\(bodyIndent)<!-- reminder:\(reminderId)\(listPart)\(timePart)\(completedPart) -->")
         }
 
         // Reminder child type metadata (for note/link metadata children)

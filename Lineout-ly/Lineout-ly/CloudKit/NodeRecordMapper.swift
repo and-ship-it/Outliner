@@ -81,6 +81,7 @@ struct NodeRecordMapper {
             record["reminderTimeMinute"] = nil
         }
         record["reminderChildType"] = node.reminderChildType as CKRecordValue?
+        record["isReminderCompleted"] = (node.isReminderCompleted ? 1 : 0) as CKRecordValue
 
         // Date node fields
         record["isDateNode"] = (node.isDateNode ? 1 : 0) as CKRecordValue
@@ -117,6 +118,7 @@ struct NodeRecordMapper {
         let reminderTimeHour: Int?
         let reminderTimeMinute: Int?
         let reminderChildType: String?
+        let isReminderCompleted: Bool
         let isDateNode: Bool
         let dateNodeDate: Date?
         let sectionType: String?
@@ -148,6 +150,7 @@ struct NodeRecordMapper {
         let reminderTimeHour: Int? = (record["reminderTimeHour"] as? Int64).map { Int($0) }
         let reminderTimeMinute: Int? = (record["reminderTimeMinute"] as? Int64).map { Int($0) }
         let reminderChildType = record["reminderChildType"] as? String
+        let isReminderCompleted = (record["isReminderCompleted"] as? Int64 ?? 0) != 0
         let isDateNode = (record["isDateNode"] as? Int64 ?? 0) != 0
         let dateNodeDate = record["dateNodeDate"] as? Date
         let sectionType = record["sectionType"] as? String
@@ -176,6 +179,7 @@ struct NodeRecordMapper {
             reminderTimeHour: reminderTimeHour,
             reminderTimeMinute: reminderTimeMinute,
             reminderChildType: reminderChildType,
+            isReminderCompleted: isReminderCompleted,
             isDateNode: isDateNode,
             dateNodeDate: dateNodeDate,
             sectionType: sectionType,

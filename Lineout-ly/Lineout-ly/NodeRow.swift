@@ -170,6 +170,7 @@ struct NodeRow: View {
         if node.isSectionHeader { return .secondary }
         if node.isCalendarEvent { return .primary }
         if node.isTask && node.isTaskCompleted { return .secondary }
+        if node.isOneWayReminderCompleted { return .secondary }
         if node.isUnseen { return .blue }
         return .primary
     }
@@ -636,8 +637,8 @@ struct NodeRow: View {
             )
             .offset(y: bulletVerticalOffset)  // Center with first line of text
 
-            // Task checkbox (shown when node is a task)
-            if node.isTask {
+            // Task checkbox (shown when node is a task, hidden for one-way reminders)
+            if node.isTask && (node.reminderIdentifier == nil || SettingsManager.shared.reminderBidirectionalSync) {
                 Button(action: {
                     node.toggleTaskCompleted()
                     // Sync completion status to Apple Reminders
@@ -826,7 +827,7 @@ struct NodeRow: View {
             ),
             isFocused: isNodeFocused,
             protectedPrefixLength: protectedPrefixLength(for: node),
-            isTaskCompleted: node.isTask && node.isTaskCompleted,
+            isTaskCompleted: (node.isTask && node.isTaskCompleted) || node.isOneWayReminderCompleted,
             isUnseen: node.isUnseen,
             isDateNode: node.isDateNode,
             hasNextNode: hasNextNode,
@@ -880,7 +881,7 @@ struct NodeRow: View {
                     .font(.system(size: fontSize, weight: (effectiveDepth == 0 || node.isDateNode) ? .semibold : (node.isSectionHeader ? .medium : .regular)))
                     .foregroundColor(nodeTextColor)
                     .italic(node.isPlaceholder)
-                    .strikethrough(node.isTask && node.isTaskCompleted)
+                    .strikethrough((node.isTask && node.isTaskCompleted) || node.isOneWayReminderCompleted)
                     .lineLimit(maxLinesWhenCollapsed)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1042,6 +1043,10 @@ struct NodeRow: View {
         // Section headers: protect display prefix (base name + empty indicator when empty, full title otherwise)
         if node.isSectionHeader {
             return sectionIsEmpty ? sectionEmptyPrefix.count : node.title.count
+        }
+        // One-way synced reminders: entire title is read-only
+        if node.reminderIdentifier != nil && !SettingsManager.shared.reminderBidirectionalSync {
+            return node.title.count
         }
         // Calendar events and placeholders are fully non-editable
         if node.isCalendarEvent || node.isPlaceholder {

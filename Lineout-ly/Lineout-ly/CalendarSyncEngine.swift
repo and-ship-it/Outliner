@@ -9,7 +9,7 @@ import EventKit
 import Foundation
 
 /// One-way sync engine: Apple Calendar → Lineout-ly outline nodes.
-/// Calendar events appear as read-only bullets under each day's "calendar" section.
+/// Calendar events appear as read-only bullets directly under each day's date node.
 /// Changes in Apple Calendar are reflected in the outline; outline changes do NOT push back.
 @Observable
 @MainActor
@@ -30,6 +30,10 @@ final class CalendarSyncEngine {
 
     /// Request access to Apple Calendar. Returns true if granted.
     func requestAccess() async -> Bool {
+        guard SettingsManager.shared.calendarIntegrationEnabled else {
+            isAuthorized = false
+            return false
+        }
         if #available(macOS 14.0, iOS 17.0, *) {
             do {
                 let granted = try await eventStore.requestFullAccessToEvents()
@@ -74,6 +78,7 @@ final class CalendarSyncEngine {
 
     /// Debounced handler for store changes
     private func handleStoreChanged() {
+        guard SettingsManager.shared.calendarIntegrationEnabled else { return }
         debounceTask?.cancel()
         debounceTask = Task {
             try? await Task.sleep(nanoseconds: 500_000_000) // 500ms debounce
@@ -85,14 +90,16 @@ final class CalendarSyncEngine {
     // MARK: - Core Sync
 
     /// Sync calendar events for the current week into the outline.
-    /// For each day: fetch events, update/create/remove event nodes under the "calendar" section.
+    /// Events are placed directly under date nodes (no section headers).
     func syncCalendarEvents() async {
+        guard SettingsManager.shared.calendarIntegrationEnabled else { return }
         guard isAuthorized else { return }
         guard let document = WindowManager.shared.document else { return }
 
         let weekDates = DateStructureManager.shared.currentWeekDates()
         let calendar = Calendar.current
         var didChange = false
+        let dismissedIds = Set(SettingsManager.shared.dismissedCalendarEventIds)
 
         // Get selected calendar IDs (empty = all calendars)
         let selectedIds = SettingsManager.shared.selectedCalendarIds
@@ -101,10 +108,6 @@ final class CalendarSyncEngine {
             calendars = nil // All calendars
         } else {
             calendars = eventStore.calendars(for: .event).filter { selectedIds.contains($0.calendarIdentifier) }
-            if calendars?.isEmpty == true {
-                // If all selected calendars are gone, fall back to all
-                // (user may have deleted a calendar)
-            }
         }
 
         for date in weekDates {
@@ -113,10 +116,6 @@ final class CalendarSyncEngine {
 
             // Find the date node
             guard let dateNode = DateStructureManager.shared.dateNode(for: date, in: document) else { continue }
-
-            // Find the "calendar" section
-            let calendarSectionId = DateStructureManager.deterministicSectionUUID(for: date, sectionType: "calendar")
-            guard let calendarSection = dateNode.children.first(where: { $0.id == calendarSectionId }) else { continue }
 
             // Fetch events for this day
             let predicate = eventStore.predicateForEvents(withStart: startOfDay, end: endOfDay, calendars: calendars)
@@ -127,14 +126,15 @@ final class CalendarSyncEngine {
                     return e1.startDate < e2.startDate
                 }
 
-            // Build set of current event identifiers
+            // Build set of current event identifiers (excluding dismissed)
             let currentEventIds = Set(events.map { $0.calendarItemIdentifier })
+                .subtracting(dismissedIds)
 
             // Remove event nodes whose identifier no longer matches any fetched event
-            let existingEventNodes = calendarSection.children.filter { $0.isCalendarEvent }
+            let existingEventNodes = dateNode.children.filter { $0.isCalendarEvent }
             for eventNode in existingEventNodes {
                 guard let eventId = eventNode.calendarEventIdentifier else { continue }
-                if !currentEventIds.contains(eventId) {
+                if !currentEventIds.contains(eventId) || dismissedIds.contains(eventId) {
                     eventNode.removeFromParent()
                     didChange = true
                     print("[Calendar] Removed event node: \(eventNode.title)")
@@ -144,10 +144,14 @@ final class CalendarSyncEngine {
             // Update existing and create new event nodes
             for (sortIdx, event) in events.enumerated() {
                 let eventId = event.calendarItemIdentifier
+
+                // Skip dismissed events
+                guard !dismissedIds.contains(eventId) else { continue }
+
                 let formattedTitle = formatEventTitle(event)
                 let calName = event.calendar?.title
 
-                if let existingNode = calendarSection.children.first(where: { $0.calendarEventIdentifier == eventId }) {
+                if let existingNode = dateNode.children.first(where: { $0.calendarEventIdentifier == eventId }) {
                     // Update if title or calendar changed
                     if existingNode.title != formattedTitle {
                         existingNode.title = formattedTitle
@@ -166,26 +170,14 @@ final class CalendarSyncEngine {
                         calendarEventIdentifier: eventId,
                         calendarName: calName
                     )
-                    // Insert at the correct position (after existing events, sorted by sortIdx)
-                    let insertIndex = calendarSection.children.filter({ !$0.isPlaceholder }).count
-                    calendarSection.addChild(newNode, at: insertIndex)
+                    dateNode.addChild(newNode)
                     didChange = true
                     print("[Calendar] Created event node: \(formattedTitle)")
                 }
             }
 
-            // Re-sort event nodes by sortIndex
-            let nonEventChildren = calendarSection.children.filter { !$0.isCalendarEvent && !$0.isPlaceholder }
-            let eventChildren = calendarSection.children.filter { $0.isCalendarEvent }
-                .sorted { $0.sortIndex < $1.sortIndex }
-            let placeholders = calendarSection.children.filter { $0.isPlaceholder }
-            calendarSection.children = eventChildren + nonEventChildren + placeholders
-            for child in calendarSection.children {
-                child.parent = calendarSection
-            }
-
-            // Manage placeholder
-            DateStructureManager.shared.ensurePlaceholder(in: calendarSection, date: date, sectionType: "calendar")
+            // Sort all children by time
+            DateStructureManager.shared.sortChildrenByTime(of: dateNode)
         }
 
         if didChange {
@@ -195,6 +187,23 @@ final class CalendarSyncEngine {
         } else {
             print("[Calendar] Sync complete — no changes")
         }
+    }
+
+    // MARK: - Force Sync
+
+    /// Force a full resync: clears dismissed IDs and re-fetches everything.
+    func forceSync() async {
+        SettingsManager.shared.dismissedCalendarEventIds = []
+        await syncCalendarEvents()
+    }
+
+    // MARK: - Remove All Calendar Events
+
+    /// Remove all calendar event nodes from the document (called when integration is disabled).
+    func removeAllCalendarEvents() {
+        guard let document = WindowManager.shared.document else { return }
+        DateStructureManager.shared.removeAllCalendarEvents(in: document)
+        iCloudManager.shared.scheduleAutoSave(for: document)
     }
 
     // MARK: - Event Title Formatting

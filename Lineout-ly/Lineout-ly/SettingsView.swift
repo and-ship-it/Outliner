@@ -24,9 +24,9 @@ struct SettingsView: View {
                     Label("Display", systemImage: "textformat.size")
                 }
 
-            CalendarsSettingsView()
+            IntegrationsSettingsView()
                 .tabItem {
-                    Label("Calendars", systemImage: "calendar")
+                    Label("Integrations", systemImage: "arrow.triangle.2.circlepath")
                 }
 
             DataSettingsView()
@@ -34,7 +34,7 @@ struct SettingsView: View {
                     Label("Data", systemImage: "trash")
                 }
         }
-        .frame(width: 450, height: 300)
+        .frame(width: 450, height: 450)
     }
 }
 
@@ -178,17 +178,72 @@ struct DataSettingsView: View {
     }
 }
 
-// MARK: - Calendars Settings Tab
+// MARK: - Integrations Settings Tab
 
-struct CalendarsSettingsView: View {
+struct IntegrationsSettingsView: View {
+    private var settings: SettingsManager { SettingsManager.shared }
+
     var body: some View {
         Form {
+            // Calendar Integration
             Section {
-                CalendarPickerView()
+                Toggle("Enable Calendar Integration", isOn: Binding(
+                    get: { settings.calendarIntegrationEnabled },
+                    set: { newValue in
+                        settings.calendarIntegrationEnabled = newValue
+                        if !newValue {
+                            CalendarSyncEngine.shared.removeAllCalendarEvents()
+                        } else {
+                            Task { await CalendarSyncEngine.shared.requestAccess(); await CalendarSyncEngine.shared.syncCalendarEvents() }
+                        }
+                    }
+                ))
+
+                if settings.calendarIntegrationEnabled {
+                    CalendarPickerView()
+
+                    Button("Force Resync Calendars") {
+                        Task { await CalendarSyncEngine.shared.forceSync() }
+                    }
+                }
             } header: {
-                Text("Displayed Calendars")
+                Text("Calendar")
             } footer: {
-                Text("Select which calendars to show under each day. Empty selection shows all calendars.")
+                Text("Disabling removes all calendar events from the outline.")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+            }
+
+            // Reminders Integration
+            Section {
+                Toggle("Enable Reminders Integration", isOn: Binding(
+                    get: { settings.reminderIntegrationEnabled },
+                    set: { newValue in
+                        settings.reminderIntegrationEnabled = newValue
+                        if !newValue {
+                            ReminderSyncEngine.shared.removeAllReminders()
+                        } else {
+                            Task { _ = await ReminderSyncEngine.shared.requestAccess(); await ReminderSyncEngine.shared.syncExternalChanges() }
+                        }
+                    }
+                ))
+
+                if settings.reminderIntegrationEnabled {
+                    Toggle("Bidirectional Sync", isOn: Binding(
+                        get: { settings.reminderBidirectionalSync },
+                        set: { settings.reminderBidirectionalSync = $0 }
+                    ))
+
+                    ReminderListPickerView()
+
+                    Button("Force Resync Reminders") {
+                        Task { await ReminderSyncEngine.shared.forceResync() }
+                    }
+                }
+            } header: {
+                Text("Reminders")
+            } footer: {
+                Text("Disabling removes all reminders from the outline. Bidirectional sync allows editing reminders from the outline.")
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
@@ -277,6 +332,74 @@ struct CalendarPickerView: View {
         }
         #if os(iOS)
         .navigationTitle("Select Calendars")
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+    }
+}
+
+/// A view listing all available reminder lists with toggles.
+/// Empty selection = all lists (all toggles appear ON).
+struct ReminderListPickerView: View {
+    private var settings: SettingsManager { SettingsManager.shared }
+    @State private var availableLists: [EKCalendar] = []
+
+    var body: some View {
+        Group {
+            if ReminderSyncEngine.shared.isAuthorized {
+                if availableLists.isEmpty {
+                    Text("No reminder lists found")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(availableLists, id: \.calendarIdentifier) { list in
+                        Toggle(isOn: Binding(
+                            get: {
+                                let ids = settings.selectedReminderListIds
+                                return ids.isEmpty || ids.contains(list.calendarIdentifier)
+                            },
+                            set: { newValue in
+                                var ids = settings.selectedReminderListIds
+                                if ids.isEmpty {
+                                    ids = availableLists.map(\.calendarIdentifier)
+                                    if !newValue {
+                                        ids.removeAll { $0 == list.calendarIdentifier }
+                                    }
+                                } else {
+                                    if newValue {
+                                        if !ids.contains(list.calendarIdentifier) {
+                                            ids.append(list.calendarIdentifier)
+                                        }
+                                        if ids.count == availableLists.count {
+                                            ids = []
+                                        }
+                                    } else {
+                                        ids.removeAll { $0 == list.calendarIdentifier }
+                                    }
+                                }
+                                settings.selectedReminderListIds = ids
+                                Task { await ReminderSyncEngine.shared.forceResync() }
+                            }
+                        )) {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(Color(cgColor: list.cgColor))
+                                    .frame(width: 12, height: 12)
+                                Text(list.title)
+                            }
+                        }
+                        .tint(.accentColor)
+                    }
+                }
+            } else {
+                Text("Reminders access not granted")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear {
+            availableLists = ReminderSyncEngine.shared.availableReminderLists()
+                .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        }
+        #if os(iOS)
+        .navigationTitle("Select Reminder Lists")
         .navigationBarTitleDisplayMode(.inline)
         #endif
     }

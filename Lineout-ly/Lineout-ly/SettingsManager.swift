@@ -21,6 +21,12 @@ final class SettingsManager {
         static let defaultFontSize = "defaultFontSize"
         static let focusModeEnabled = "focusModeEnabled"
         static let selectedCalendarIds = "selectedCalendarIds"
+        static let calendarIntegrationEnabled = "calendarIntegrationEnabled"
+        static let reminderIntegrationEnabled = "reminderIntegrationEnabled"
+        static let reminderBidirectionalSync = "reminderBidirectionalSync"
+        static let selectedReminderListIds = "selectedReminderListIds"
+        static let dismissedCalendarEventIds = "dismissedCalendarEventIds"
+        static let dismissedReminderIds = "dismissedReminderIds"
     }
 
     // MARK: - Settings Properties
@@ -66,6 +72,69 @@ final class SettingsManager {
         }
     }
 
+    // MARK: - Integration Settings
+
+    /// Whether Apple Calendar integration is enabled
+    var calendarIntegrationEnabled: Bool {
+        didSet {
+            save(calendarIntegrationEnabled, forKey: Keys.calendarIntegrationEnabled)
+        }
+    }
+
+    /// Whether Apple Reminders integration is enabled
+    var reminderIntegrationEnabled: Bool {
+        didSet {
+            save(reminderIntegrationEnabled, forKey: Keys.reminderIntegrationEnabled)
+        }
+    }
+
+    /// Whether reminder sync is bidirectional (true) or one-way read-only (false)
+    var reminderBidirectionalSync: Bool {
+        didSet {
+            save(reminderBidirectionalSync, forKey: Keys.reminderBidirectionalSync)
+        }
+    }
+
+    /// Selected reminder list identifiers (empty = all lists)
+    var selectedReminderListIds: [String] {
+        didSet {
+            save(selectedReminderListIds, forKey: Keys.selectedReminderListIds)
+        }
+    }
+
+    /// Calendar event IDs dismissed by the user (deleted from outline but still in Calendar app)
+    var dismissedCalendarEventIds: [String] {
+        didSet {
+            save(dismissedCalendarEventIds, forKey: Keys.dismissedCalendarEventIds)
+        }
+    }
+
+    /// Reminder IDs dismissed by the user (deleted from outline but still in Reminders app)
+    var dismissedReminderIds: [String] {
+        didSet {
+            save(dismissedReminderIds, forKey: Keys.dismissedReminderIds)
+        }
+    }
+
+    // MARK: - Dismissed Item Helpers
+
+    func dismissCalendarEvent(_ id: String) {
+        if !dismissedCalendarEventIds.contains(id) {
+            dismissedCalendarEventIds.append(id)
+        }
+    }
+
+    func dismissReminder(_ id: String) {
+        if !dismissedReminderIds.contains(id) {
+            dismissedReminderIds.append(id)
+        }
+    }
+
+    func clearDismissedItems() {
+        dismissedCalendarEventIds = []
+        dismissedReminderIds = []
+    }
+
     // MARK: - iCloud Key-Value Store
 
     private let store = NSUbiquitousKeyValueStore.default
@@ -77,6 +146,12 @@ final class SettingsManager {
         defaultFontSize = store.object(forKey: Keys.defaultFontSize) as? Double ?? 13.0
         focusModeEnabled = store.object(forKey: Keys.focusModeEnabled) as? Bool ?? false
         selectedCalendarIds = store.object(forKey: Keys.selectedCalendarIds) as? [String] ?? []
+        calendarIntegrationEnabled = store.object(forKey: Keys.calendarIntegrationEnabled) as? Bool ?? true
+        reminderIntegrationEnabled = store.object(forKey: Keys.reminderIntegrationEnabled) as? Bool ?? true
+        reminderBidirectionalSync = store.object(forKey: Keys.reminderBidirectionalSync) as? Bool ?? false
+        selectedReminderListIds = store.object(forKey: Keys.selectedReminderListIds) as? [String] ?? []
+        dismissedCalendarEventIds = store.object(forKey: Keys.dismissedCalendarEventIds) as? [String] ?? []
+        dismissedReminderIds = store.object(forKey: Keys.dismissedReminderIds) as? [String] ?? []
 
         // Observe iCloud changes from other devices
         NotificationCenter.default.addObserver(
@@ -139,6 +214,30 @@ final class SettingsManager {
                 case Keys.selectedCalendarIds:
                     if let value = store.object(forKey: key) as? [String] {
                         selectedCalendarIds = value
+                    }
+                case Keys.calendarIntegrationEnabled:
+                    if let value = store.object(forKey: key) as? Bool {
+                        calendarIntegrationEnabled = value
+                    }
+                case Keys.reminderIntegrationEnabled:
+                    if let value = store.object(forKey: key) as? Bool {
+                        reminderIntegrationEnabled = value
+                    }
+                case Keys.reminderBidirectionalSync:
+                    if let value = store.object(forKey: key) as? Bool {
+                        reminderBidirectionalSync = value
+                    }
+                case Keys.selectedReminderListIds:
+                    if let value = store.object(forKey: key) as? [String] {
+                        selectedReminderListIds = value
+                    }
+                case Keys.dismissedCalendarEventIds:
+                    if let value = store.object(forKey: key) as? [String] {
+                        dismissedCalendarEventIds = value
+                    }
+                case Keys.dismissedReminderIds:
+                    if let value = store.object(forKey: key) as? [String] {
+                        dismissedReminderIds = value
                     }
                 default:
                     break

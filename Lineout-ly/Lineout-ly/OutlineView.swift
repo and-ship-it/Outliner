@@ -1319,15 +1319,76 @@ struct SettingsSheet: View {
                     Text("Affects weekly document naming. Changes take effect on next app launch.")
                 }
 
-                // Calendar Events Section
+                // Calendar Integration Section
                 Section {
-                    NavigationLink("Select Calendars") {
-                        CalendarPickerView()
+                    Toggle("Enable Calendar Integration", isOn: Binding(
+                        get: { settings.calendarIntegrationEnabled },
+                        set: { newValue in
+                            settings.calendarIntegrationEnabled = newValue
+                            if !newValue {
+                                CalendarSyncEngine.shared.removeAllCalendarEvents()
+                            } else {
+                                Task {
+                                    _ = await CalendarSyncEngine.shared.requestAccess()
+                                    await CalendarSyncEngine.shared.syncCalendarEvents()
+                                }
+                            }
+                        }
+                    ))
+                    .tint(.accentColor)
+
+                    if settings.calendarIntegrationEnabled {
+                        NavigationLink("Select Calendars") {
+                            CalendarPickerView()
+                        }
+
+                        Button("Force Resync") {
+                            Task { await CalendarSyncEngine.shared.forceSync() }
+                        }
                     }
                 } header: {
-                    Text("Calendar Events")
+                    Text("Calendar")
                 } footer: {
-                    Text("Choose which calendars display events under each day.")
+                    Text("Disabling removes all calendar events from the outline.")
+                }
+
+                // Reminders Integration Section
+                Section {
+                    Toggle("Enable Reminders Integration", isOn: Binding(
+                        get: { settings.reminderIntegrationEnabled },
+                        set: { newValue in
+                            settings.reminderIntegrationEnabled = newValue
+                            if !newValue {
+                                ReminderSyncEngine.shared.removeAllReminders()
+                            } else {
+                                Task {
+                                    _ = await ReminderSyncEngine.shared.requestAccess()
+                                    await ReminderSyncEngine.shared.syncExternalChanges()
+                                }
+                            }
+                        }
+                    ))
+                    .tint(.accentColor)
+
+                    if settings.reminderIntegrationEnabled {
+                        Toggle("Bidirectional Sync", isOn: Binding(
+                            get: { settings.reminderBidirectionalSync },
+                            set: { settings.reminderBidirectionalSync = $0 }
+                        ))
+                        .tint(.accentColor)
+
+                        NavigationLink("Select Reminder Lists") {
+                            ReminderListPickerView()
+                        }
+
+                        Button("Force Resync") {
+                            Task { await ReminderSyncEngine.shared.forceResync() }
+                        }
+                    }
+                } header: {
+                    Text("Reminders")
+                } footer: {
+                    Text("Disabling removes all reminders from the outline. Bidirectional sync allows editing from the outline.")
                 }
 
                 // About Section

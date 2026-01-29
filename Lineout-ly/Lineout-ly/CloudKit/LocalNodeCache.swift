@@ -133,6 +133,7 @@ struct CodableNode: Codable {
     var reminderTimeHour: Int?
     var reminderTimeMinute: Int?
     var reminderChildType: String?
+    var isReminderCompleted: Bool?
     var isUnseen: Bool?
     var isDateNode: Bool?
     var dateNodeDate: Date?
@@ -158,6 +159,7 @@ struct CodableNode: Codable {
         self.reminderTimeHour = node.reminderTimeHour
         self.reminderTimeMinute = node.reminderTimeMinute
         self.reminderChildType = node.reminderChildType
+        self.isReminderCompleted = node.isReminderCompleted
         self.isUnseen = node.isUnseen
         self.isDateNode = node.isDateNode
         self.dateNodeDate = node.dateNodeDate
@@ -192,7 +194,8 @@ struct CodableNode: Codable {
             sectionType: sectionType,
             calendarEventIdentifier: calendarEventIdentifier,
             calendarName: calendarName,
-            isPlaceholder: isPlaceholder ?? false
+            isPlaceholder: isPlaceholder ?? false,
+            isReminderCompleted: isReminderCompleted ?? false
         )
         return node
     }

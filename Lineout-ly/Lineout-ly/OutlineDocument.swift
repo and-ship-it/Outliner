@@ -930,8 +930,18 @@ final class OutlineDocument {
         let indexInParent = focused.indexInParent ?? 0
         let previousFocusId = focusedNodeId
 
-        // Clean up linked Apple Reminders before deletion
-        cleanupReminders(for: focused)
+        // Track dismissed synced items (so they don't reappear on next sync)
+        if let calId = focused.calendarEventIdentifier {
+            SettingsManager.shared.dismissCalendarEvent(calId)
+        }
+        if let remId = focused.reminderIdentifier, !SettingsManager.shared.reminderBidirectionalSync {
+            SettingsManager.shared.dismissReminder(remId)
+        }
+
+        // Clean up linked Apple Reminders before deletion (only in bidirectional mode)
+        if SettingsManager.shared.reminderBidirectionalSync {
+            cleanupReminders(for: focused)
+        }
 
         // If deleting a metadata child (note/link), sync the cleared field to its parent's reminder
         if focused.reminderChildType != nil,
@@ -1395,6 +1405,27 @@ final class OutlineDocument {
 
     // MARK: - Node Movement
 
+    /// Walk up the tree to find the nearest date node ancestor.
+    private func dateNodeAncestor(of node: OutlineNode) -> OutlineNode? {
+        var current: OutlineNode? = node
+        while let n = current {
+            if n.isDateNode { return n }
+            current = n.parent
+        }
+        return nil
+    }
+
+    /// Check if a node would remain under the same date node ancestor after moving to newParent.
+    private func wouldRemainUnderSameDateNode(_ node: OutlineNode, newParent: OutlineNode) -> Bool {
+        let currentDateNode = dateNodeAncestor(of: node)
+        let targetDateNode: OutlineNode? = {
+            if newParent.isDateNode { return newParent }
+            return dateNodeAncestor(of: newParent)
+        }()
+        guard let current = currentDateNode, let target = targetDateNode else { return false }
+        return current.id == target.id
+    }
+
     func moveUp() {
         guard let focused = focusedNode,
               let parent = focused.parent,
@@ -1404,13 +1435,14 @@ final class OutlineDocument {
         guard !focused.isDateNode else { return }
         guard !focused.isPlaceholder else { return }
         guard focused.reminderChildType == nil else { return }
+        // Calendar events and one-way reminders can only move within their date node
+        if focused.isCalendarEvent || (focused.reminderIdentifier != nil && !SettingsManager.shared.reminderBidirectionalSync) {
+            // Moving within same parent keeps the node under the same date node
+            guard dateNodeAncestor(of: focused) != nil else { return }
+        }
         // Section headers can only move within their date node parent
         if focused.isSectionHeader {
             guard parent.isDateNode else { return }
-        }
-        // Calendar events can only move within their calendar section (same parent)
-        if focused.isCalendarEvent {
-            guard parent.isSectionHeader && parent.sectionType == "calendar" else { return }
         }
 
         let swappedSibling = parent.children[index - 1]
@@ -1435,13 +1467,14 @@ final class OutlineDocument {
         guard !focused.isDateNode else { return }
         guard !focused.isPlaceholder else { return }
         guard focused.reminderChildType == nil else { return }
+        // Calendar events and one-way reminders can only move within their date node
+        if focused.isCalendarEvent || (focused.reminderIdentifier != nil && !SettingsManager.shared.reminderBidirectionalSync) {
+            // Moving within same parent keeps the node under the same date node
+            guard dateNodeAncestor(of: focused) != nil else { return }
+        }
         // Section headers can only move within their date node parent
         if focused.isSectionHeader {
             guard parent.isDateNode else { return }
-        }
-        // Calendar events can only move within their calendar section (same parent)
-        if focused.isCalendarEvent {
-            guard parent.isSectionHeader && parent.sectionType == "calendar" else { return }
         }
 
         let swappedSibling = parent.children[index + 1]
@@ -1487,9 +1520,14 @@ final class OutlineDocument {
         guard let focused = focusedNode,
               let parent = focused.parent,
               let previousSibling = focused.previousSibling else { return }
-        // Don't allow indenting structural nodes or reminder metadata children
-        guard !focused.isStructural else { return }
+        // Don't allow indenting date nodes, placeholders, or reminder metadata children
+        guard !focused.isDateNode else { return }
+        guard !focused.isPlaceholder else { return }
         guard focused.reminderChildType == nil else { return }
+        // Calendar events and one-way reminders: allow indent if stays under same date node
+        if focused.isCalendarEvent || (focused.reminderIdentifier != nil && !SettingsManager.shared.reminderBidirectionalSync) {
+            guard wouldRemainUnderSameDateNode(focused, newParent: previousSibling) else { return }
+        }
 
         let originalParentId = parent.id
         let originalIndex = focused.indexInParent ?? 0
@@ -1591,9 +1629,14 @@ final class OutlineDocument {
         guard let focused = focusedNode,
               let parent = focused.parent,
               let grandparent = parent.parent else { return }
-        // Don't allow outdenting structural nodes or reminder metadata children
-        guard !focused.isStructural else { return }
+        // Don't allow outdenting date nodes, placeholders, or reminder metadata children
+        guard !focused.isDateNode else { return }
+        guard !focused.isPlaceholder else { return }
         guard focused.reminderChildType == nil else { return }
+        // Calendar events and one-way reminders: allow outdent if stays under same date node
+        if focused.isCalendarEvent || (focused.reminderIdentifier != nil && !SettingsManager.shared.reminderBidirectionalSync) {
+            guard wouldRemainUnderSameDateNode(focused, newParent: grandparent) else { return }
+        }
         // Cannot outdent beyond zoom boundary — zoom out first
         if let boundaryId = zoomBoundaryId, parent.id == boundaryId { return }
 
@@ -1922,6 +1965,7 @@ extension OutlineDocument {
             existingNode.reminderTimeHour = change.reminderTimeHour
             existingNode.reminderTimeMinute = change.reminderTimeMinute
             existingNode.reminderChildType = change.reminderChildType
+            existingNode.isReminderCompleted = change.isReminderCompleted
             existingNode.isDateNode = change.isDateNode
             existingNode.dateNodeDate = change.dateNodeDate
             existingNode.sectionType = change.sectionType
@@ -1967,7 +2011,8 @@ extension OutlineDocument {
                 sectionType: change.sectionType,
                 calendarEventIdentifier: change.calendarEventIdentifier,
                 calendarName: change.calendarName,
-                isPlaceholder: change.isPlaceholder
+                isPlaceholder: change.isPlaceholder,
+                isReminderCompleted: change.isReminderCompleted
             )
 
             // Find parent

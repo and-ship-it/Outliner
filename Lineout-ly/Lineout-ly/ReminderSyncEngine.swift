@@ -42,6 +42,11 @@ final class ReminderSyncEngine {
 
     /// Request access to Apple Reminders. Returns true if granted.
     func requestAccess() async -> Bool {
+        guard SettingsManager.shared.reminderIntegrationEnabled else {
+            isAuthorized = false
+            return false
+        }
+
         if #available(macOS 14.0, iOS 17.0, *) {
             do {
                 let granted = try await eventStore.requestFullAccessToReminders()
@@ -86,6 +91,8 @@ final class ReminderSyncEngine {
 
     /// Debounced handler for store changes
     private func handleStoreChanged() {
+        guard SettingsManager.shared.reminderIntegrationEnabled else { return }
+
         debounceTask?.cancel()
         debounceTask = Task {
             try? await Task.sleep(nanoseconds: 500_000_000) // 500ms debounce
@@ -245,6 +252,7 @@ final class ReminderSyncEngine {
     /// Step 1: Update existing synced nodes from their reminders.
     /// Step 2: Import new external reminders due this week.
     func syncExternalChanges() async {
+        guard SettingsManager.shared.reminderIntegrationEnabled else { return }
         guard isAuthorized else { return }
         guard let document = WindowManager.shared.document else { return }
         guard !isApplyingReminderChanges else { return }
@@ -270,10 +278,20 @@ final class ReminderSyncEngine {
                     nodeChanged = true
                 }
 
-                // Sync completion
-                if node.isTask && node.isTaskCompleted != reminder.isCompleted {
-                    node.isTaskCompleted = reminder.isCompleted
-                    nodeChanged = true
+                // Sync completion state based on mode
+                let isBidirectional = SettingsManager.shared.reminderBidirectionalSync
+                if isBidirectional {
+                    // Bidirectional mode: sync completion to isTaskCompleted
+                    if node.isTask && node.isTaskCompleted != reminder.isCompleted {
+                        node.isTaskCompleted = reminder.isCompleted
+                        nodeChanged = true
+                    }
+                } else {
+                    // One-way mode: sync to isReminderCompleted (display only)
+                    if node.isReminderCompleted != reminder.isCompleted {
+                        node.isReminderCompleted = reminder.isCompleted
+                        nodeChanged = true
+                    }
                 }
 
                 // Sync list name
@@ -313,9 +331,9 @@ final class ReminderSyncEngine {
 
                         if weekStartDays.contains(remDay),
                            let newDateNode = DateStructureManager.shared.dateNode(for: remDueDate, in: document) {
-                            // Within current week — move node to new date's reminders section
+                            // Within current week — move node directly under new date node
                             node.removeFromParent()
-                            insertNodeSortedByTime(node, under: remindersSection(for: newDateNode))
+                            newDateNode.addChild(node)
                             didChange = true
                             print("[Reminders] Moved reminder to new date: \(node.title) → \(newDateNode.title)")
                         } else {
@@ -328,14 +346,20 @@ final class ReminderSyncEngine {
                     }
                 }
 
-                // Sync notes → metadata child
-                if syncNotesInbound(from: reminder, to: node) { nodeChanged = true }
+                // Sync notes → metadata child (only in bidirectional mode)
+                if isBidirectional {
+                    if syncNotesInbound(from: reminder, to: node) { nodeChanged = true }
+                }
 
-                // Sync URL → metadata child
-                if syncLinkInbound(from: reminder, to: node) { nodeChanged = true }
+                // Sync URL → metadata child (only in bidirectional mode)
+                if isBidirectional {
+                    if syncLinkInbound(from: reminder, to: node) { nodeChanged = true }
+                }
 
-                // Sync recurrence → metadata child
-                if syncRecurrenceInbound(from: reminder, to: node) { nodeChanged = true }
+                // Sync recurrence → metadata child (only in bidirectional mode)
+                if isBidirectional {
+                    if syncRecurrenceInbound(from: reminder, to: node) { nodeChanged = true }
+                }
 
                 if nodeChanged {
                     document.contentDidChange(nodeId: node.id)
@@ -347,6 +371,7 @@ final class ReminderSyncEngine {
                 node.reminderListName = nil
                 node.reminderTimeHour = nil
                 node.reminderTimeMinute = nil
+                node.isReminderCompleted = false
                 // Remove metadata children
                 removeMetadataChildren(from: node)
                 didChange = true
@@ -365,20 +390,49 @@ final class ReminderSyncEngine {
             return
         }
 
+        // Filter by selected reminder lists
+        let selectedListIds = SettingsManager.shared.selectedReminderListIds
+        let reminderCalendars: [EKCalendar]?
+        if selectedListIds.isEmpty {
+            reminderCalendars = nil
+        } else {
+            reminderCalendars = eventStore.calendars(for: .reminder).filter { selectedListIds.contains($0.calendarIdentifier) }
+        }
+
         let predicate = eventStore.predicateForIncompleteReminders(
             withDueDateStarting: weekStart,
             ending: weekEndPlusOne,
-            calendars: nil
+            calendars: reminderCalendars
         )
 
-        let reminders = await fetchReminders(matching: predicate)
+        var reminders = await fetchReminders(matching: predicate)
+
+        // In one-way mode, also fetch completed reminders for this week
+        if !SettingsManager.shared.reminderBidirectionalSync {
+            let completedPredicate = eventStore.predicateForCompletedReminders(
+                withCompletionDateStarting: weekStart,
+                ending: weekEndPlusOne,
+                calendars: reminderCalendars
+            )
+            let completedReminders = await fetchReminders(matching: completedPredicate)
+            reminders.append(contentsOf: completedReminders)
+        }
 
         // Build set of already-tracked reminder IDs
         let trackedIds = Set(syncedNodes.compactMap { $0.reminderIdentifier })
 
+        // Get dismissed reminder IDs to skip
+        let dismissedIds = SettingsManager.shared.dismissedReminderIds
+
+        let isBidirectional = SettingsManager.shared.reminderBidirectionalSync
+
         for reminder in reminders {
             let remId = reminder.calendarItemIdentifier
             guard !trackedIds.contains(remId) else { continue }
+            guard !dismissedIds.contains(remId) else {
+                print("[Reminders] Skipping dismissed reminder: \(reminder.title ?? "")")
+                continue
+            }
 
             let reminderTitle = (reminder.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -395,12 +449,16 @@ final class ReminderSyncEngine {
             let isRecurring = !(reminder.recurrenceRules ?? []).isEmpty
             if isRecurring && !reminderTitle.isEmpty {
                 if let existingNode = syncedNodes.first(where: {
-                    $0.isTask && $0.isTaskCompleted &&
+                    (isBidirectional ? ($0.isTask && $0.isTaskCompleted) : $0.isReminderCompleted) &&
                     $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == reminderTitle
                 }) {
                     // Recycle: point to the new occurrence and reset completion
                     existingNode.reminderIdentifier = remId
-                    existingNode.isTaskCompleted = reminder.isCompleted
+                    if isBidirectional {
+                        existingNode.isTaskCompleted = reminder.isCompleted
+                    } else {
+                        existingNode.isReminderCompleted = reminder.isCompleted
+                    }
                     existingNode.reminderListName = reminder.calendar?.title
                     existingNode.isUnseen = true
 
@@ -415,12 +473,14 @@ final class ReminderSyncEngine {
                     let cal = Calendar.current
                     if currentDate.map({ cal.startOfDay(for: $0) }) != cal.startOfDay(for: dueDate) {
                         existingNode.removeFromParent()
-                        insertNodeSortedByTime(existingNode, under: remindersSection(for: dateNode))
+                        dateNode.addChild(existingNode)
                     }
 
-                    _ = syncNotesInbound(from: reminder, to: existingNode)
-                    _ = syncLinkInbound(from: reminder, to: existingNode)
-                    _ = syncRecurrenceInbound(from: reminder, to: existingNode)
+                    if isBidirectional {
+                        _ = syncNotesInbound(from: reminder, to: existingNode)
+                        _ = syncLinkInbound(from: reminder, to: existingNode)
+                        _ = syncRecurrenceInbound(from: reminder, to: existingNode)
+                    }
 
                     didChange = true
                     print("[Reminders] Recycled completed node for recurring reminder: \(reminderTitle)")
@@ -428,16 +488,19 @@ final class ReminderSyncEngine {
                 }
             }
 
-            // Also check for duplicate under the reminders section (same title, already tracked).
+            // Also check for duplicate under the date node (same title, already tracked).
             // This catches multi-device sync races and non-recurring duplicates.
-            let remSection = remindersSection(for: dateNode)
             if !reminderTitle.isEmpty,
-               let existingUnderDate = remSection.children.first(where: {
+               let existingUnderDate = dateNode.children.first(where: {
                    $0.reminderIdentifier != nil &&
                    $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == reminderTitle
                }) {
                 existingUnderDate.reminderIdentifier = remId
-                existingUnderDate.isTaskCompleted = reminder.isCompleted
+                if isBidirectional {
+                    existingUnderDate.isTaskCompleted = reminder.isCompleted
+                } else {
+                    existingUnderDate.isReminderCompleted = reminder.isCompleted
+                }
                 existingUnderDate.reminderListName = reminder.calendar?.title
 
                 if let h = reminder.dueDateComponents?.hour, h != Int(NSNotFound),
@@ -446,19 +509,28 @@ final class ReminderSyncEngine {
                     existingUnderDate.reminderTimeMinute = m
                 }
 
-                _ = syncNotesInbound(from: reminder, to: existingUnderDate)
-                _ = syncLinkInbound(from: reminder, to: existingUnderDate)
-                _ = syncRecurrenceInbound(from: reminder, to: existingUnderDate)
+                if isBidirectional {
+                    _ = syncNotesInbound(from: reminder, to: existingUnderDate)
+                    _ = syncLinkInbound(from: reminder, to: existingUnderDate)
+                    _ = syncRecurrenceInbound(from: reminder, to: existingUnderDate)
+                }
 
                 didChange = true
                 print("[Reminders] Updated existing node instead of creating duplicate: \(reminderTitle)")
                 continue
             }
 
-            // New external reminder — create node under the appropriate date
+            // New external reminder — create node directly under date node
             let newNode = OutlineNode(title: reminder.title ?? "")
-            newNode.isTask = true
-            newNode.isTaskCompleted = reminder.isCompleted
+
+            // In bidirectional mode, set as task; in one-way mode, just set title
+            if isBidirectional {
+                newNode.isTask = true
+                newNode.isTaskCompleted = reminder.isCompleted
+            } else {
+                newNode.isReminderCompleted = reminder.isCompleted
+            }
+
             newNode.reminderIdentifier = remId
             newNode.reminderListName = reminder.calendar?.title
             newNode.isUnseen = true
@@ -470,40 +542,40 @@ final class ReminderSyncEngine {
                 newNode.reminderTimeMinute = m
             }
 
-            // Insert sorted by time into the reminders section
-            insertNodeSortedByTime(newNode, under: remindersSection(for: dateNode))
+            // Add directly under date node
+            dateNode.addChild(newNode)
 
-            // Sync notes → metadata child
-            _ = syncNotesInbound(from: reminder, to: newNode)
-
-            // Sync URL → metadata child
-            _ = syncLinkInbound(from: reminder, to: newNode)
-
-            // Sync recurrence → metadata child
-            _ = syncRecurrenceInbound(from: reminder, to: newNode)
+            // Sync metadata children only in bidirectional mode
+            if isBidirectional {
+                _ = syncNotesInbound(from: reminder, to: newNode)
+                _ = syncLinkInbound(from: reminder, to: newNode)
+                _ = syncRecurrenceInbound(from: reminder, to: newNode)
+            }
 
             didChange = true
             print("[Reminders] Created node from external reminder: \(reminder.title ?? "")")
         }
 
-        // Step 2.5: Clean up existing duplicates under each reminders section.
+        // Step 2.5: Clean up existing duplicates under each date node.
         // Handles duplicates that accumulated before the dedup fix above.
         let dateNodes = document.root.children.filter { $0.isDateNode }
         for dateNode in dateNodes {
-            let remSectionForDedup = remindersSection(for: dateNode)
             var seenTitles: [String: OutlineNode] = [:]
             var duplicatesToRemove: [OutlineNode] = []
 
-            for child in remSectionForDedup.children {
+            for child in dateNode.children {
                 guard child.reminderIdentifier != nil, child.reminderChildType == nil else { continue }
                 let title = child.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !title.isEmpty else { continue }
 
                 if let existing = seenTitles[title] {
                     // Keep the incomplete one (or the first one if both same state)
-                    if child.isTaskCompleted && !existing.isTaskCompleted {
+                    let childCompleted = isBidirectional ? child.isTaskCompleted : child.isReminderCompleted
+                    let existingCompleted = isBidirectional ? existing.isTaskCompleted : existing.isReminderCompleted
+
+                    if childCompleted && !existingCompleted {
                         duplicatesToRemove.append(child)
-                    } else if !child.isTaskCompleted && existing.isTaskCompleted {
+                    } else if !childCompleted && existingCompleted {
                         duplicatesToRemove.append(existing)
                         seenTitles[title] = child
                     } else {
@@ -520,81 +592,84 @@ final class ReminderSyncEngine {
                 didChange = true
                 print("[Reminders] Removed duplicate reminder node: \(dup.title)")
             }
+
+            // Sort children by time after cleanup
+            DateStructureManager.shared.sortChildrenByTime(of: dateNode)
         }
 
-        // Step 3: Push unsynced outliner tasks to Reminders.
-        // Tasks under date nodes with isTask=true but no reminderIdentifier
-        // need a corresponding reminder created (e.g., arrived via CloudKit from another device).
-        //
-        // IMPORTANT: Before creating a new reminder, check if an existing reminder
-        // with the same title already exists for that date. This prevents creating
-        // duplicate non-recurring reminders that replace the original recurring ones.
-        let allNodes = document.root.flattened()
-        // Build a lookup of already-fetched reminders by title for quick matching
-        let existingRemindersByTitle: [String: EKReminder] = {
-            var map: [String: EKReminder] = [:]
-            for r in reminders {
-                let t = (r.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if !t.isEmpty { map[t] = r }
-            }
-            return map
-        }()
+        // Step 3: Push unsynced outliner tasks to Reminders (only in bidirectional mode)
+        if SettingsManager.shared.reminderBidirectionalSync {
+            // Tasks under date nodes with isTask=true but no reminderIdentifier
+            // need a corresponding reminder created (e.g., arrived via CloudKit from another device).
+            //
+            // IMPORTANT: Before creating a new reminder, check if an existing reminder
+            // with the same title already exists for that date. This prevents creating
+            // duplicate non-recurring reminders that replace the original recurring ones.
+            let allNodes = document.root.flattened()
+            // Build a lookup of already-fetched reminders by title for quick matching
+            let existingRemindersByTitle: [String: EKReminder] = {
+                var map: [String: EKReminder] = [:]
+                for r in reminders {
+                    let t = (r.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !t.isEmpty { map[t] = r }
+                }
+                return map
+            }()
 
-        for node in allNodes {
-            guard node.isTask,
-                  node.reminderIdentifier == nil,
-                  node.reminderChildType == nil,
-                  let dueDate = DateStructureManager.shared.inferredDueDate(for: node) else { continue }
+            for node in allNodes {
+                guard node.isTask,
+                      node.reminderIdentifier == nil,
+                      node.reminderChildType == nil,
+                      let dueDate = DateStructureManager.shared.inferredDueDate(for: node) else { continue }
 
-            let nodeTitle = node.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                let nodeTitle = node.title.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Check if an existing reminder with the same title and date already exists.
-            // This avoids creating a new non-recurring reminder that shadows a recurring one.
-            if !nodeTitle.isEmpty, let existingReminder = existingRemindersByTitle[nodeTitle] {
-                let cal = Calendar.current
-                if let remDueComps = existingReminder.dueDateComponents,
-                   let remDueDate = cal.date(from: remDueComps),
-                   cal.startOfDay(for: remDueDate) == cal.startOfDay(for: dueDate) {
-                    // Link to existing reminder instead of creating a new one
-                    node.reminderIdentifier = existingReminder.calendarItemIdentifier
-                    node.reminderListName = existingReminder.calendar?.title
+                // Check if an existing reminder with the same title and date already exists.
+                // This avoids creating a new non-recurring reminder that shadows a recurring one.
+                if !nodeTitle.isEmpty, let existingReminder = existingRemindersByTitle[nodeTitle] {
+                    let cal = Calendar.current
+                    if let remDueComps = existingReminder.dueDateComponents,
+                       let remDueDate = cal.date(from: remDueComps),
+                       cal.startOfDay(for: remDueDate) == cal.startOfDay(for: dueDate) {
+                        // Link to existing reminder instead of creating a new one
+                        node.reminderIdentifier = existingReminder.calendarItemIdentifier
+                        node.reminderListName = existingReminder.calendar?.title
+                        didChange = true
+                        print("[Reminders] Linked unsynced task to existing reminder: \(nodeTitle)")
+                        continue
+                    }
+                }
+
+                // Create a reminder for this unsynced task
+                do {
+                    let reminder = EKReminder(eventStore: eventStore)
+                    reminder.title = node.title
+                    reminder.isCompleted = node.isTaskCompleted
+
+                    var comps = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
+                    if let hour = node.reminderTimeHour, let minute = node.reminderTimeMinute {
+                        comps.hour = hour
+                        comps.minute = minute
+                    }
+                    reminder.dueDateComponents = comps
+
+                    // Sync metadata children outbound
+                    syncMetadataChildrenOutbound(from: node, to: reminder)
+
+                    reminder.calendar = eventStore.defaultCalendarForNewReminders()
+                    try eventStore.save(reminder, commit: true)
+
+                    node.reminderIdentifier = reminder.calendarItemIdentifier
+                    node.reminderListName = reminder.calendar?.title
                     didChange = true
-                    print("[Reminders] Linked unsynced task to existing reminder: \(nodeTitle)")
-                    continue
+                    print("[Reminders] Pushed unsynced task to Reminders: \(node.title)")
+                } catch {
+                    print("[Reminders] Error pushing task to Reminders: \(error)")
                 }
-            }
-
-            // Create a reminder for this unsynced task
-            do {
-                let reminder = EKReminder(eventStore: eventStore)
-                reminder.title = node.title
-                reminder.isCompleted = node.isTaskCompleted
-
-                var comps = Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
-                if let hour = node.reminderTimeHour, let minute = node.reminderTimeMinute {
-                    comps.hour = hour
-                    comps.minute = minute
-                }
-                reminder.dueDateComponents = comps
-
-                // Sync metadata children outbound
-                syncMetadataChildrenOutbound(from: node, to: reminder)
-
-                reminder.calendar = eventStore.defaultCalendarForNewReminders()
-                try eventStore.save(reminder, commit: true)
-
-                node.reminderIdentifier = reminder.calendarItemIdentifier
-                node.reminderListName = reminder.calendar?.title
-                didChange = true
-                print("[Reminders] Pushed unsynced task to Reminders: \(node.title)")
-            } catch {
-                print("[Reminders] Error pushing task to Reminders: \(error)")
             }
         }
 
-        // Update placeholders for all reminders sections
         if didChange {
-            DateStructureManager.shared.ensureAllPlaceholders(in: document)
             document.structureVersion += 1
             iCloudManager.shared.scheduleAutoSave(for: document)
         }
@@ -638,41 +713,6 @@ final class ReminderSyncEngine {
 
     // MARK: - Sorted Insertion
 
-    /// Insert a new node under a date node, sorted by time.
-    /// Nodes without time go to the end. Only used for new imports — existing nodes are not re-sorted.
-    /// Find the "reminders" section under a date node, falling back to the date node itself.
-    private func remindersSection(for dateNode: OutlineNode) -> OutlineNode {
-        guard let date = dateNode.dateNodeDate else { return dateNode }
-        let sectionId = DateStructureManager.deterministicSectionUUID(for: date, sectionType: "reminders")
-        return dateNode.children.first(where: { $0.id == sectionId }) ?? dateNode
-    }
-
-    private func insertNodeSortedByTime(_ node: OutlineNode, under dateNode: OutlineNode) {
-        guard let hour = node.reminderTimeHour, let minute = node.reminderTimeMinute else {
-            // No time — append at end
-            dateNode.addChild(node)
-            return
-        }
-
-        let nodeMinutes = hour * 60 + minute
-
-        // Find first child with a later time (or no time) to insert before
-        for (index, child) in dateNode.children.enumerated() {
-            if let childHour = child.reminderTimeHour, let childMin = child.reminderTimeMinute {
-                if childHour * 60 + childMin > nodeMinutes {
-                    dateNode.addChild(node, at: index)
-                    return
-                }
-            } else {
-                // Child has no time — insert before it (timed items come first)
-                dateNode.addChild(node, at: index)
-                return
-            }
-        }
-
-        // All existing children have earlier times — append at end
-        dateNode.addChild(node)
-    }
 
     // MARK: - Metadata Children Sync (Notes + Links)
 
@@ -897,5 +937,25 @@ final class ReminderSyncEngine {
         } catch {
             print("[Reminders] Error syncing metadata children: \(error)")
         }
+    }
+
+    // MARK: - Public Helpers
+
+    /// Force a full resync of all reminders by clearing dismissed list
+    func forceResync() async {
+        SettingsManager.shared.dismissedReminderIds = []
+        await syncExternalChanges()
+    }
+
+    /// Get list of available reminder lists for selection
+    func availableReminderLists() -> [EKCalendar] {
+        eventStore.calendars(for: .reminder)
+    }
+
+    /// Remove all reminder nodes from the document
+    func removeAllReminders() {
+        guard let document = WindowManager.shared.document else { return }
+        DateStructureManager.shared.removeAllReminders(in: document)
+        iCloudManager.shared.scheduleAutoSave(for: document)
     }
 }

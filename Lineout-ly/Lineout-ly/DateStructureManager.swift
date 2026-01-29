@@ -238,118 +238,107 @@ final class DateStructureManager {
         return UUID(uuid: uuidBytes)
     }
 
-    // MARK: - Ensure Section Nodes
+    // MARK: - Migration: Flatten Sections to Direct Children
 
-    /// Ensure "calendar" and "reminders" section headers exist under each date node.
-    /// Calendar section at index 0, reminders at index 1 (initial position only — user can reorder).
-    func ensureSectionNodes(in document: OutlineDocument) {
-        var created = false
-
-        for dateNode in document.root.children where dateNode.isDateNode {
-            guard let date = dateNode.dateNodeDate else { continue }
-
-            let calendarSectionId = Self.deterministicSectionUUID(for: date, sectionType: "calendar")
-            let remindersSectionId = Self.deterministicSectionUUID(for: date, sectionType: "reminders")
-
-            // Create calendar section if not present
-            if !dateNode.children.contains(where: { $0.id == calendarSectionId }) {
-                let calSection = OutlineNode(
-                    id: calendarSectionId,
-                    title: "calendar",
-                    sectionType: "calendar"
-                )
-                dateNode.addChild(calSection, at: 0)
-                created = true
-            }
-
-            // Create reminders section if not present
-            if !dateNode.children.contains(where: { $0.id == remindersSectionId }) {
-                let remSection = OutlineNode(
-                    id: remindersSectionId,
-                    title: "reminders",
-                    sectionType: "reminders"
-                )
-                // Insert after calendar section (index 1) or at 0 if calendar isn't at 0
-                let insertIdx = dateNode.children.firstIndex(where: { $0.id == calendarSectionId })
-                    .map { $0 + 1 } ?? 1
-                dateNode.addChild(remSection, at: min(insertIdx, dateNode.children.count))
-                created = true
-            }
-        }
-
-        if created {
-            // Ensure placeholders for empty sections
-            ensureAllPlaceholders(in: document)
-            document.structureVersion += 1
-            print("[DateStructure] Created section nodes under date nodes")
-        }
-    }
-
-    // MARK: - Placeholder Management
-
-    /// Ensure all section nodes have correct placeholder state.
-    func ensureAllPlaceholders(in document: OutlineDocument) {
-        for dateNode in document.root.children where dateNode.isDateNode {
-            guard let date = dateNode.dateNodeDate else { continue }
-            for section in dateNode.children where section.isSectionHeader {
-                let sectionType = section.sectionType ?? "calendar"
-                ensurePlaceholder(in: section, date: date, sectionType: sectionType)
-            }
-        }
-    }
-
-    /// Manage placeholder for a section:
-    /// - If section has non-placeholder children → remove placeholder
-    /// - If section has no non-placeholder children → add placeholder
-    func ensurePlaceholder(in section: OutlineNode, date: Date, sectionType: String) {
-        let placeholderId = Self.deterministicPlaceholderUUID(for: date, sectionType: sectionType)
-        let hasRealChildren = section.children.contains(where: { !$0.isPlaceholder })
-        let existingPlaceholder = section.children.first(where: { $0.id == placeholderId })
-
-        if hasRealChildren {
-            // Remove placeholder if it exists
-            existingPlaceholder?.removeFromParent()
-        } else if existingPlaceholder == nil {
-            // Add placeholder
-            let placeholderText = sectionType == "calendar"
-                ? "no calendar events on this day"
-                : "no reminders on this day"
-            let placeholder = OutlineNode(
-                id: placeholderId,
-                title: placeholderText,
-                isPlaceholder: true
-            )
-            section.addChild(placeholder)
-        }
-    }
-
-    // MARK: - Migration
-
-    /// One-time migration: move reminder nodes from directly under date nodes into "reminders" sections.
-    func migrateRemindersIntoSections(in document: OutlineDocument) {
+    /// Migrate from section-based structure to flat structure.
+    /// Moves all children from calendar/reminders sections up to the date node,
+    /// removes section headers and placeholders.
+    func migrateSectionsToFlatStructure(in document: OutlineDocument) {
         var migrated = 0
 
         for dateNode in document.root.children where dateNode.isDateNode {
-            guard let date = dateNode.dateNodeDate else { continue }
-            let remindersSectionId = Self.deterministicSectionUUID(for: date, sectionType: "reminders")
-            guard let remindersSection = dateNode.children.first(where: { $0.id == remindersSectionId }) else { continue }
+            let sectionNodes = dateNode.children.filter { $0.isSectionHeader }
+            guard !sectionNodes.isEmpty else { continue }
 
-            // Find reminder nodes directly under the date node (not under a section)
-            let remindersToMove = dateNode.children.filter { node in
-                node.reminderIdentifier != nil && node.sectionType == nil
-            }
-
-            for reminder in remindersToMove {
-                reminder.removeFromParent()
-                remindersSection.addChild(reminder)
+            for section in sectionNodes {
+                // Move real children (non-placeholder) up to date node
+                let realChildren = section.children.filter { !$0.isPlaceholder }
+                for child in realChildren {
+                    child.removeFromParent()
+                    dateNode.addChild(child)
+                }
+                // Remove the section node itself (and any placeholders inside)
+                section.removeFromParent()
                 migrated += 1
             }
         }
 
         if migrated > 0 {
-            ensureAllPlaceholders(in: document)
             document.structureVersion += 1
-            print("[DateStructure] Migrated \(migrated) reminders into section containers")
+            print("[DateStructure] Migrated \(migrated) sections to flat structure")
+        }
+    }
+
+    // MARK: - Time-Based Sorting
+
+    /// Sort all date node children by time (synced items first by time, user bullets last).
+    func sortAllDateNodeChildrenByTime(in document: OutlineDocument) {
+        for dateNode in document.root.children where dateNode.isDateNode {
+            sortChildrenByTime(of: dateNode)
+        }
+    }
+
+    /// Sort children of a date node by time.
+    /// Order: all-day events → timed items by time → no-time reminders → user bullets.
+    func sortChildrenByTime(of dateNode: OutlineNode) {
+        let sorted = dateNode.children.sorted { a, b in
+            timeScore(for: a) < timeScore(for: b)
+        }
+        dateNode.children = sorted
+        for child in sorted { child.parent = dateNode }
+    }
+
+    /// Compute a sort score for ordering within a date node.
+    private func timeScore(for node: OutlineNode) -> Int {
+        // Calendar events: use sortIndex set by CalendarSyncEngine (already time-ordered)
+        if node.isCalendarEvent {
+            // All-day events have sortIndex 0, timed events > 0
+            return Int(node.sortIndex)
+        }
+        // Reminders with time
+        if node.reminderIdentifier != nil {
+            if let h = node.reminderTimeHour, let m = node.reminderTimeMinute {
+                // Offset by 10000 so reminders at same time as events appear after events
+                return 10000 + h * 60 + m
+            }
+            // No-time reminders after timed items
+            return 20000
+        }
+        // User-created bullets last
+        return 30000
+    }
+
+    // MARK: - Remove Synced Items
+
+    /// Remove all calendar event nodes from the document (called when calendar integration is disabled).
+    func removeAllCalendarEvents(in document: OutlineDocument) {
+        var removed = 0
+        for dateNode in document.root.children where dateNode.isDateNode {
+            let calendarNodes = dateNode.children.filter { $0.isCalendarEvent }
+            for node in calendarNodes {
+                node.removeFromParent()
+                removed += 1
+            }
+        }
+        if removed > 0 {
+            document.structureVersion += 1
+            print("[DateStructure] Removed \(removed) calendar events (integration disabled)")
+        }
+    }
+
+    /// Remove all reminder nodes from the document (called when reminder integration is disabled).
+    func removeAllReminders(in document: OutlineDocument) {
+        var removed = 0
+        for dateNode in document.root.children where dateNode.isDateNode {
+            let reminderNodes = dateNode.children.filter { $0.reminderIdentifier != nil }
+            for node in reminderNodes {
+                node.removeFromParent()
+                removed += 1
+            }
+        }
+        if removed > 0 {
+            document.structureVersion += 1
+            print("[DateStructure] Removed \(removed) reminders (integration disabled)")
         }
     }
 

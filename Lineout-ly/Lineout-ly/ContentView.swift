@@ -117,14 +117,13 @@ struct ContentView: View {
             // Ensure date structure exists for current week
             if let doc = WindowManager.shared.document {
                 DateStructureManager.shared.ensureDateNodes(in: doc)
-                DateStructureManager.shared.ensureSectionNodes(in: doc)
-                DateStructureManager.shared.migrateRemindersIntoSections(in: doc)
+                // Migrate old section-based structure to flat (one-time)
+                DateStructureManager.shared.migrateSectionsToFlatStructure(in: doc)
 
                 // Collapse ALL nodes with children for fast launch
-                // (includes section headers which are collapsed by default)
                 var initialCollapsed = Set<UUID>()
                 for node in doc.root.flattened() {
-                    if node.hasChildren || node.isSectionHeader {
+                    if node.hasChildren {
                         initialCollapsed.insert(node.id)
                     }
                 }
@@ -155,18 +154,22 @@ struct ContentView: View {
                 }
             }
 
-            // Set up Apple Reminders bidirectional sync
-            let remindersGranted = await ReminderSyncEngine.shared.requestAccess()
-            if remindersGranted {
-                ReminderSyncEngine.shared.startObserving()
-                await ReminderSyncEngine.shared.syncExternalChanges()
+            // Set up Apple Reminders sync (conditional on settings)
+            if SettingsManager.shared.reminderIntegrationEnabled {
+                let remindersGranted = await ReminderSyncEngine.shared.requestAccess()
+                if remindersGranted {
+                    ReminderSyncEngine.shared.startObserving()
+                    await ReminderSyncEngine.shared.syncExternalChanges()
+                }
             }
 
-            // Set up Apple Calendar one-way sync
-            let calendarGranted = await CalendarSyncEngine.shared.requestAccess()
-            if calendarGranted {
-                CalendarSyncEngine.shared.startObserving()
-                await CalendarSyncEngine.shared.syncCalendarEvents()
+            // Set up Apple Calendar one-way sync (conditional on settings)
+            if SettingsManager.shared.calendarIntegrationEnabled {
+                let calendarGranted = await CalendarSyncEngine.shared.requestAccess()
+                if calendarGranted {
+                    CalendarSyncEngine.shared.startObserving()
+                    await CalendarSyncEngine.shared.syncCalendarEvents()
+                }
             }
         }
         .onDisappear {
